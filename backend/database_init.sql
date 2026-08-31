@@ -11,9 +11,9 @@ CREATE TABLE IF NOT EXISTS distritos (
 );
 
 -- 2. TABLA USUARIOS
-DO  BEGIN
+DO $$ BEGIN
     CREATE TYPE rol_usuario AS ENUM ('admin', 'coordinador', 'personero');
-EXCEPTION WHEN duplicate_object THEN null; END ;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
 
 CREATE TABLE IF NOT EXISTS usuarios (
     id SERIAL PRIMARY KEY,
@@ -41,9 +41,9 @@ CREATE TABLE IF NOT EXISTS locales_votacion (
 );
 
 -- 4. TABLA MESAS DE SUFRAGIO
-DO  BEGIN
+DO $$ BEGIN
     CREATE TYPE estado_mesa AS ENUM ('pendiente', 'reportada', 'verificada', 'observada');
-EXCEPTION WHEN duplicate_object THEN null; END ;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
 
 CREATE TABLE IF NOT EXISTS mesas_sufragio (
     id SERIAL PRIMARY KEY,
@@ -87,9 +87,9 @@ CREATE TABLE IF NOT EXISTS asignacion_personeros (
 );
 
 -- 8. TABLA HISTORIAL ASIGNACIONES
-DO  BEGIN
+DO $$ BEGIN
     CREATE TYPE tipo_asignacion AS ENUM ('coordinador', 'personero');
-EXCEPTION WHEN duplicate_object THEN null; END ;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
 
 CREATE TABLE IF NOT EXISTS historial_asignaciones (
     id SERIAL PRIMARY KEY,
@@ -104,9 +104,9 @@ CREATE TABLE IF NOT EXISTS historial_asignaciones (
 );
 
 -- 9. TABLA RESULTADOS MESA
-DO  BEGIN
+DO $$ BEGIN
     CREATE TYPE estado_resultado AS ENUM ('pendiente', 'verificado', 'observado');
-EXCEPTION WHEN duplicate_object THEN null; END ;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
 
 CREATE TABLE IF NOT EXISTS resultados_mesa (
     id SERIAL PRIMARY KEY,
@@ -138,9 +138,9 @@ CREATE TABLE IF NOT EXISTS detalle_resultados (
 );
 
 -- 11. TABLA AUDITORIA
-DO  BEGIN
+DO $$ BEGIN
     CREATE TYPE accion_auditoria AS ENUM ('INSERT', 'UPDATE', 'DELETE');
-EXCEPTION WHEN duplicate_object THEN null; END ;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
 
 CREATE TABLE IF NOT EXISTS auditoria (
     id BIGSERIAL PRIMARY KEY,
@@ -185,13 +185,13 @@ ON CONFLICT (codigo) DO NOTHING;
 -- SEED DATA: USUARIO ADMINISTRADOR (DNI: 00000000 / Clave: admin123)
 -- =====================================================
 INSERT INTO usuarios (dni, nombres, apellidos, password_hash, rol, activo) VALUES
-    ('00000000', 'Administrador', 'Sistema', '.fG3pZ1c7e9K3pZ1c7e9K3pZ1c7', 'admin', TRUE)
+    ('00000000', 'Administrador', 'Sistema', '$2a$12$K896lCgYwV4eN27w5uH94eknZc.fG3pZ1c7e9K3pZ1c7e9K3pZ1c7', 'admin', TRUE)
 ON CONFLICT (dni) DO NOTHING;
 
 -- =====================================================
 -- SEED DATA: LOCALES Y MESAS DE HUAMANGA (787 MESAS)
 -- =====================================================
-DO 
+DO $$
 DECLARE
     v_dist_id INT;
     v_local_id INT;
@@ -3430,4 +3430,4 @@ BEGIN
         VALUES ('000787', v_local_id, 229, 'pendiente')
         ON CONFLICT (numero_mesa) DO NOTHING;
     END IF;
-END ;
+END $$;
