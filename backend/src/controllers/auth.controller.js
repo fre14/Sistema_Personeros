@@ -89,3 +89,47 @@ export const getProfile = async (req, res) => {
     res.status(500).json({ success: false, message: 'Error al obtener perfil', error: error.message });
   }
 };
+
+export const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'La nueva contraseña debe tener al menos 6 caracteres' 
+      });
+    }
+
+    const user = await db('usuarios').where({ id: req.user.id }).first();
+    if (!user) return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+
+    // Si el usuario ya tiene contraseña, verificar la actual
+    if (user.password_hash && currentPassword) {
+      const isValid = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!isValid) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'La contraseña actual no es correcta' 
+        });
+      }
+    }
+
+    const password_hash = await bcrypt.hash(newPassword, 12);
+    await db('usuarios').where({ id: req.user.id }).update({
+      password_hash,
+      updated_at: db.fn.now()
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'Contraseña actualizada correctamente' 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error al cambiar contraseña', 
+      error: error.message 
+    });
+  }
+};
