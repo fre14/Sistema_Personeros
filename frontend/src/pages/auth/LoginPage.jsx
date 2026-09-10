@@ -57,13 +57,16 @@ const LoginPage = () => {
             />
 
             <Input
-              label="Contraseña"
+              label="Contraseña / Número de Mesa"
               type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder="Contraseña o N° de mesa asignada"
             />
+            <p className="text-xs text-gray-500 -mt-3">
+              💡 <strong>Personeros:</strong> Pueden ingresar colocando su número de mesa como contraseña.
+            </p>
 
             <Button
               type="submit"

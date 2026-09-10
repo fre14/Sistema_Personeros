@@ -15,9 +15,34 @@ export const login = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Credenciales inválidas' });
     }
 
-    const validPassword = await bcrypt.compare(password, user.password_hash);
-    if (!validPassword) {
-      return res.status(401).json({ success: false, message: 'Credenciales inválidas' });
+    let isValid = false;
+
+    // 1. Verificación estándar de password con bcrypt
+    if (user.password_hash) {
+      isValid = await bcrypt.compare(password, user.password_hash);
+    }
+
+    // 2. Si es personero, permitir autenticación con su número de mesa oficial asignado
+    if (!isValid && user.rol === 'personero') {
+      const asignacion = await db('asignacion_personeros')
+        .join('mesas_sufragio', 'asignacion_personeros.mesa_id', 'mesas_sufragio.id')
+        .where({
+          'asignacion_personeros.usuario_id': user.id,
+          'asignacion_personeros.activo': true
+        })
+        .select('mesas_sufragio.numero_mesa')
+        .first();
+
+      if (asignacion && asignacion.numero_mesa === password.trim()) {
+        isValid = true;
+      }
+    }
+
+    if (!isValid) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Credenciales inválidas. Verifique su DNI y su Contraseña o Número de Mesa.' 
+      });
     }
 
     const payload = { id: user.id, dni: user.dni, rol: user.rol };
