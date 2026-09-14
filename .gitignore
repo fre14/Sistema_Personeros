@@ -22,6 +22,5 @@ npm-debug.log*
 .vscode/
 .idea/
 
-# Docker (not used in production)
-docker-compose.yml
-nginx.conf
+# SSL certificates (keep in server, not in repo)
+nginx/ssl/

@@ -1,12 +1,15 @@
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
+# Install production dependencies only
 COPY package*.json ./
-RUN npm install
+RUN npm ci --only=production
 
 COPY . .
 
+# Run migrations, seed, then start
 EXPOSE 3000
 
-CMD ["npm", "run", "dev"]
+# Production: use node directly (PM2 is used on VPS deployments)
+CMD ["node", "src/app.js"]
