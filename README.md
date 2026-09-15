@@ -8,7 +8,7 @@ Sistema **100% web** para la gestión de personeros electorales, coordinadores d
 
 | Dato | Valor |
 |------|-------|
-| Electores | ~225,940 |
+| Electores | 228,241 |
 | Distritos | 16 (Provincia de Huamanga) |
 | Locales de votación | 96 |
 | Mesas de sufragio | 787 (ONPE oficial) |
