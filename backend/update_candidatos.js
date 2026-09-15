@@ -1,6 +1,6 @@
 import db from './src/config/database.js';
 
-export const candidatesList = [
+const candidatesList = [
   {
     numero_lista: 1,
     nombre_completo: 'Hernan Garagondo',
@@ -66,21 +66,25 @@ export const candidatesList = [
   }
 ];
 
-async function main() {
+async function updateCandidatos() {
   try {
-    const count = await db('candidatos').count('* as c').first();
-    if (parseInt(count.c) === 0) {
-      console.log('Sembrando 9 candidatos oficiales para Huamanga 2026...');
-      await db('candidatos').insert(candidatesList);
-      console.log('✅ 9 candidatos registrados exitosamente.');
-    } else {
-      console.log(`Ya existen ${count.c} candidatos en la BD.`);
+    console.log('Actualizando candidatos oficiales...');
+    // Eliminar candidatos anteriores o reiniciar
+    await db('detalle_resultados').del();
+    await db('candidatos').del();
+
+    for (const c of candidatesList) {
+      await db('candidatos').insert(c);
+      console.log(`+ Lista ${c.numero_lista}: ${c.nombre_completo} (${c.organizacion_politica} - ${c.siglas})`);
     }
+
+    const total = await db('candidatos').count('* as count').first();
+    console.log(`\n✅ ${total.count} candidatos oficiales registrados en la base de datos con éxito.`);
   } catch (err) {
-    console.error('Error insertando candidatos:', err.message);
+    console.error('Error actualizando candidatos:', err.message);
   } finally {
     await db.destroy();
   }
 }
 
-main();
+updateCandidatos();
