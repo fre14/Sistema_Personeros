@@ -5,20 +5,20 @@ import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
-import { MapPin, Users } from 'lucide-react';
+import { MapPin, Users, AlertCircle } from 'lucide-react';
 
 const MiMesaPage = () => {
-  const [mesa, setMesa] = useState(null);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
     const fetchMiMesa = async () => {
       try {
-        const res = await get('/personero/mesa');
-        setMesa(res.data);
+        const res = await get('/resultados/mi-mesa');
+        setData(res.data?.data || res.data || null);
       } catch (error) {
-        console.error(error);
+        console.error('Error obteniendo mesa asignada:', error);
       } finally {
         setLoading(false);
       }
@@ -26,13 +26,22 @@ const MiMesaPage = () => {
     fetchMiMesa();
   }, []);
 
-  if (loading) return <div className="flex justify-center mt-20"><Spinner /></div>;
+  if (loading) return <div className="flex justify-center mt-20"><Spinner text="Consultando asignación..." /></div>;
+
+  const mesa = data?.mesa;
+  const local = data?.local;
+  const resultado = data?.resultado;
 
   if (!mesa) {
     return (
-      <div className="text-center mt-20 p-6 bg-white rounded-lg shadow">
-        <h2 className="text-xl font-bold text-gray-800">No tienes mesa asignada</h2>
-        <p className="text-gray-600 mt-2">Por favor contacta con tu coordinador para que te asigne una mesa de votación.</p>
+      <div className="max-w-md mx-auto text-center mt-12 p-6 bg-white rounded-xl shadow border border-gray-200">
+        <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto mb-4">
+          <AlertCircle size={32} />
+        </div>
+        <h2 className="text-xl font-extrabold text-gray-900">Mesa No Asignada</h2>
+        <p className="text-sm text-gray-600 mt-2 mb-4 leading-relaxed">
+          Su cuenta aún no tiene una mesa de votación asignada por el Administrador o Coordinador. Por favor contáctelos para que vinculen su DNI a una mesa de sufragio.
+        </p>
       </div>
     );
   }
@@ -40,46 +49,57 @@ const MiMesaPage = () => {
   return (
     <div className="max-w-md mx-auto space-y-6">
       <Card>
-        <div className="text-center pb-4 border-b">
-          <h2 className="text-4xl font-extrabold text-blue-600">Mesa {mesa.numero_mesa}</h2>
+        <div className="text-center pb-5 border-b border-gray-100">
+          <p className="text-xs font-bold uppercase tracking-wider text-red-600 mb-1">Mesa Oficial de Sufragio</p>
+          <h2 className="text-4xl font-black text-gray-900 tracking-tight">Mesa {mesa.numero_mesa}</h2>
           <div className="mt-2 inline-block">
-             <Badge variant={mesa.estado}>{mesa.estado}</Badge>
+            <Badge variant={mesa.estado}>{mesa.estado}</Badge>
           </div>
         </div>
         
-        <div className="py-4 space-y-4">
+        <div className="py-5 space-y-4 text-sm">
           <div className="flex items-start text-gray-700">
-            <MapPin className="mr-3 text-gray-400 shrink-0 mt-1" />
+            <div className="w-8 h-8 rounded-lg bg-red-100 text-red-700 flex items-center justify-center mr-3 shrink-0">
+              <MapPin size={18} />
+            </div>
             <div>
-              <p className="font-semibold">{mesa.local_nombre}</p>
-              <p className="text-sm text-gray-500">{mesa.local_direccion}</p>
-              <p className="text-sm text-gray-500">{mesa.distrito}</p>
+              <p className="font-bold text-gray-900 text-base">{local?.nombre || 'Local de Votación'}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{local?.direccion || 'Dirección registrada'}</p>
+              <p className="text-xs font-semibold text-red-700 mt-0.5">{local?.distrito_nombre || 'Huamanga'}</p>
             </div>
           </div>
           
-          <div className="flex items-center text-gray-700">
-            <Users className="mr-3 text-gray-400" />
-            <p><span className="font-semibold">{mesa.electores_habiles}</span> electores hábiles</p>
+          <div className="flex items-center text-gray-700 pt-2 border-t border-gray-100">
+            <div className="w-8 h-8 rounded-lg bg-red-100 text-red-700 flex items-center justify-center mr-3 shrink-0">
+              <Users size={18} />
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">Padrón de Electores Hábiles</p>
+              <p className="font-black text-gray-900 text-base">
+                {mesa.total_electores_habiles || 300} electores
+                <span className="text-xs font-normal text-gray-500 ml-1">(máx. 300 votos)</span>
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="pt-4 border-t">
-          {mesa.estado === 'pendiente' ? (
+        <div className="pt-4 border-t border-gray-100">
+          {mesa.estado === 'pendiente' || !resultado ? (
             <Button 
               size="lg" 
-              className="w-full text-lg py-3"
+              className="w-full text-base font-bold py-3.5 shadow-lg"
               onClick={() => navigate('/personero/cargar-resultado')}
             >
-              Cargar Resultados
+              📸 Cargar Resultados de Acta
             </Button>
           ) : (
             <Button 
-              size="lg"
+              size="lg" 
               variant="secondary"
-              className="w-full text-lg py-3"
+              className="w-full text-base font-bold py-3.5 shadow-sm"
               onClick={() => navigate('/personero/estado')}
             >
-              Ver Estado
+              Ver Estado de Transmisión
             </Button>
           )}
         </div>

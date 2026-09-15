@@ -32,8 +32,12 @@ export const subirResultado = async (req, res) => {
       const sumVotosCandidatos = parsedVotos.reduce((acc, curr) => acc + Number(curr.votos), 0);
       const total_votos_emitidos = sumVotosCandidatos + Number(votos_blanco) + Number(votos_nulo) + Number(votos_impugnados);
       
-      if (total_votos_emitidos > mesa.total_electores_habiles) {
-        return res.status(400).json({ success: false, message: 'Votos exceden electores' });
+      if (total_votos_emitidos > 300) {
+        return res.status(400).json({ success: false, message: `El total de votos emitidos (${total_votos_emitidos}) excede el límite máximo de 300 votos por mesa` });
+      }
+      
+      if (mesa.total_electores_habiles && total_votos_emitidos > mesa.total_electores_habiles) {
+        return res.status(400).json({ success: false, message: `El total de votos (${total_votos_emitidos}) excede los electores hábiles (${mesa.total_electores_habiles}) de la mesa` });
       }
       
       const resultData = {
