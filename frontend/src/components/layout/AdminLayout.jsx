@@ -64,10 +64,16 @@ const AdminLayout = () => {
       )}
 
       {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 bg-blue-900 text-white w-64 flex flex-col transition-transform duration-300 z-30 lg:static lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="p-4 border-b border-blue-800 flex items-center justify-between">
-          <h1 className="text-xl font-bold truncate">Sistema Electoral</h1>
-          <button className="lg:hidden text-blue-200 hover:text-white" onClick={() => setIsSidebarOpen(false)}>
+      <aside className={`fixed inset-y-0 left-0 bg-red-900 text-white w-64 flex flex-col transition-transform duration-300 z-30 lg:static lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} shadow-xl`}>
+        <div className="p-4 border-b border-red-800 flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <span className="text-2xl">🗳️</span>
+            <div>
+              <h1 className="text-lg font-bold truncate leading-tight">Sistema Electoral</h1>
+              <p className="text-xs text-red-200">Huamanga 2026</p>
+            </div>
+          </div>
+          <button className="lg:hidden text-red-200 hover:text-white" onClick={() => setIsSidebarOpen(false)}>
             <Menu size={24} />
           </button>
         </div>
@@ -79,7 +85,11 @@ const AdminLayout = () => {
                 <NavLink
                   to={item.to}
                   className={({ isActive }) => 
-                    `flex items-center px-4 py-3 text-sm font-medium transition-colors ${isActive ? 'bg-blue-800 text-white border-l-4 border-white' : 'text-blue-100 hover:bg-blue-800 hover:text-white border-l-4 border-transparent'}`
+                    `flex items-center px-4 py-3 text-sm font-medium transition-colors ${
+                      isActive 
+                        ? 'bg-red-800 text-white border-l-4 border-white font-semibold' 
+                        : 'text-red-100 hover:bg-red-800/70 hover:text-white border-l-4 border-transparent'
+                    }`
                   }
                 >
                   <item.icon className="mr-3 h-5 w-5" />
@@ -90,26 +100,26 @@ const AdminLayout = () => {
           </ul>
         </nav>
 
-        <div className="p-4 border-t border-blue-800">
+        <div className="p-4 border-t border-red-800 bg-red-950/40">
           <div className="flex items-center mb-3 truncate text-sm">
-            <div className="w-8 h-8 rounded-full bg-blue-700 flex items-center justify-center font-bold mr-3">
+            <div className="w-9 h-9 rounded-full bg-red-700 text-white flex items-center justify-center font-bold mr-3 border border-red-500 shadow-sm">
               {user?.nombres?.charAt(0)}
             </div>
             <div>
               <p className="font-semibold truncate">{user?.nombres} {user?.apellidos}</p>
-              <p className="text-xs text-blue-300 truncate capitalize">{user?.rol} • DNI {user?.dni}</p>
+              <p className="text-xs text-red-300 truncate capitalize">{user?.rol} • DNI {user?.dni}</p>
             </div>
           </div>
           <button
             onClick={() => setIsPasswordModalOpen(true)}
-            className="flex items-center w-full px-4 py-2 mb-1 text-sm text-blue-200 hover:text-white hover:bg-blue-800 rounded transition-colors"
+            className="flex items-center w-full px-4 py-2 mb-1 text-sm text-red-100 hover:text-white hover:bg-red-800 rounded transition-colors"
           >
             <Key className="mr-2 h-4 w-4" />
             Cambiar Contraseña
           </button>
           <button
             onClick={logout}
-            className="flex items-center w-full px-4 py-2 text-sm text-red-300 hover:text-red-100 hover:bg-blue-800 rounded transition-colors"
+            className="flex items-center w-full px-4 py-2 text-sm text-red-200 hover:text-white hover:bg-red-800 rounded transition-colors"
           >
             <LogOut className="mr-2 h-4 w-4" />
             Cerrar Sesión
@@ -123,7 +133,7 @@ const AdminLayout = () => {
           <div className="bg-white rounded-lg max-w-md w-full p-6 shadow-xl">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-gray-900 flex items-center">
-                <Key className="mr-2 text-blue-600" size={20} />
+                <Key className="mr-2 text-red-600" size={20} />
                 Cambiar Contraseña
               </h3>
               <button 
@@ -141,7 +151,7 @@ const AdminLayout = () => {
                 <input
                   type="password"
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-red-500 focus:border-red-500 text-sm"
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
                   placeholder="Ingrese su contraseña actual"
@@ -155,7 +165,7 @@ const AdminLayout = () => {
                   type="password"
                   required
                   minLength={6}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-red-500 focus:border-red-500 text-sm"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Nueva contraseña"
@@ -169,7 +179,7 @@ const AdminLayout = () => {
                   type="password"
                   required
                   minLength={6}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-red-500 focus:border-red-500 text-sm"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Repita la nueva contraseña"
@@ -186,7 +196,7 @@ const AdminLayout = () => {
                 <button
                   type="submit"
                   disabled={loadingPass}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                  className="px-4 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors"
                 >
                   {loadingPass ? 'Guardando...' : 'Actualizar Contraseña'}
                 </button>
@@ -198,13 +208,16 @@ const AdminLayout = () => {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="bg-white shadow-sm lg:hidden flex items-center p-4">
+        <header className="bg-white shadow-sm lg:hidden flex items-center p-4 border-b border-gray-200">
           <button onClick={() => setIsSidebarOpen(true)} className="text-gray-600 mr-4">
             <Menu size={24} />
           </button>
-          <h2 className="text-xl font-semibold text-gray-800 truncate">Sistema Electoral</h2>
+          <div className="flex items-center space-x-2">
+            <span className="text-xl">🗳️</span>
+            <h2 className="text-xl font-semibold text-gray-800 truncate">Sistema Electoral</h2>
+          </div>
         </header>
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 bg-gray-50">
           <Outlet />
         </div>
       </main>

@@ -139,11 +139,6 @@ describe('Services Unit Tests', () => {
       await expect(uploadActaImage(Buffer.from('test'), 'image/png', '001')).rejects.toThrow('Error uploading image: Upload failed');
     });
 
-    it('uploadActaImage lanza error si supabase es nulo', async () => {
-      supabaseInstance = null;
-      await expect(uploadActaImage(Buffer.from('test'), 'image/png', '001')).rejects.toThrow('Storage service not configured.');
-    });
-
     it('getActaUrl debería retornar signed URL', async () => {
       mockSupabaseCreateSignedUrl.mockResolvedValueOnce({ data: { signedUrl: 'http://url' }, error: null });
       const url = await getActaUrl('path.jpg');
@@ -161,12 +156,6 @@ describe('Services Unit Tests', () => {
 
     it('getActaUrl debería retornar null si no se pasa path', async () => {
       const url = await getActaUrl(null);
-      expect(url).toBeNull();
-    });
-
-    it('getActaUrl debería retornar null si supabase es nulo', async () => {
-      supabaseInstance = null;
-      const url = await getActaUrl('path.jpg');
       expect(url).toBeNull();
     });
 

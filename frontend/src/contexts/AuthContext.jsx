@@ -14,7 +14,7 @@ export const AuthProvider = ({ children }) => {
       if (token) {
         try {
           const res = await get('/auth/profile');
-          setUser(res.data);
+          setUser(res.data.data);
         } catch (error) {
           localStorage.removeItem('token');
           setToken(null);
@@ -29,10 +29,12 @@ export const AuthProvider = ({ children }) => {
   const login = async (dni, password) => {
     try {
       const res = await post('/auth/login', { dni, password });
-      localStorage.setItem('token', res.data.token);
-      setToken(res.data.token);
-      setUser(res.data.user);
-      return res.data.user;
+      const { accessToken, refreshToken, user: userData } = res.data.data;
+      localStorage.setItem('token', accessToken);
+      localStorage.setItem('refreshToken', refreshToken);
+      setToken(accessToken);
+      setUser(userData);
+      return userData;
     } catch (error) {
       toast.error(error.response?.data?.message || 'Error al iniciar sesión');
       throw error;

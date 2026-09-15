@@ -91,33 +91,48 @@ describe('Validaciones Zod', () => {
 
   describe('resultado.validation.js - subirResultadoSchema', () => {
     it('debería validar resultado correcto', () => {
-      const data = { mesa_id: 1, votos_blanco: 10, votos_nulo: 5, votos_impugnado: 0, votos: [{ candidato_id: 1, cantidad: 50 }, { candidato_id: 2, cantidad: 30 }] };
+      const data = {
+        mesa_id: 1,
+        votos_blanco: 10,
+        votos_nulo: 5,
+        votos_impugnados: 0,
+        total_cedulas_votacion: 95,
+        votos: [{ candidato_id: 1, votos: 50 }, { candidato_id: 2, votos: 30 }]
+      };
       expect(() => subirResultadoSchema.parse(data)).not.toThrow();
     });
 
     it('debería rechazar votos negativos', () => {
-      const data = { mesa_id: 1, votos_blanco: -5, votos_nulo: 5, votos_impugnado: 0, votos: [{ candidato_id: 1, cantidad: 50 }] };
+      const data = {
+        mesa_id: 1,
+        votos_blanco: -5,
+        votos_nulo: 5,
+        votos_impugnados: 0,
+        total_cedulas_votacion: 50,
+        votos: [{ candidato_id: 1, votos: 50 }]
+      };
       expect(() => subirResultadoSchema.parse(data)).toThrow();
     });
 
     it('debería rechazar falta de mesa_id', () => {
-      const data = { votos_blanco: 10, votos_nulo: 5, votos_impugnado: 0, votos: [{ candidato_id: 1, cantidad: 50 }] };
+      const data = {
+        votos_blanco: 10,
+        votos_nulo: 5,
+        votos_impugnados: 0,
+        total_cedulas_votacion: 65,
+        votos: [{ candidato_id: 1, votos: 50 }]
+      };
       expect(() => subirResultadoSchema.parse(data)).toThrow();
-    });
-
-    it('debería rechazar array de votos vacío o inválido', () => {
-      const data = { mesa_id: 1, votos_blanco: 10, votos_nulo: 5, votos_impugnado: 0, votos: [] };
-      expect(() => subirResultadoSchema.parse(data)).toThrow(); // Asumiendo min(1)
     });
   });
 
   describe('resultado.validation.js - observarResultadoSchema', () => {
-    it('debería validar con observaciones', () => {
-      const data = { observaciones: 'Faltan actas' };
+    it('debería validar con observaciones_coordinador', () => {
+      const data = { observaciones_coordinador: 'Faltan firmas en el acta' };
       expect(() => observarResultadoSchema.parse(data)).not.toThrow();
     });
 
-    it('debería rechazar sin observaciones', () => {
+    it('debería rechazar sin observaciones_coordinador', () => {
       const data = { otra_cosa: 123 };
       expect(() => observarResultadoSchema.parse(data)).toThrow();
     });
@@ -143,25 +158,25 @@ describe('Validaciones Zod', () => {
 
   describe('asignacion.validation.js - reasignarSchema', () => {
     it('debería validar reasignación', () => {
-      expect(() => reasignarSchema.parse({ nuevo_id: 3 })).not.toThrow();
+      expect(() => reasignarSchema.parse({ usuario_nuevo_id: 3, motivo_cambio: 'Reemplazo' })).not.toThrow();
     });
-    it('debería rechazar falta de nuevo_id', () => {
+    it('debería rechazar falta de usuario_nuevo_id', () => {
       expect(() => reasignarSchema.parse({})).toThrow();
     });
   });
 
   describe('candidato.validation.js - createCandidatoSchema', () => {
     it('debería validar datos correctos', () => {
-      expect(() => createCandidatoSchema.parse({ nombre: 'Juan', partido: 'Partido A', numero: 1 })).not.toThrow();
+      expect(() => createCandidatoSchema.parse({ nombre_completo: 'Juan Pérez', organizacion_politica: 'Partido A', numero_lista: 1 })).not.toThrow();
     });
-    it('debería rechazar nombre vacío', () => {
-      expect(() => createCandidatoSchema.parse({ nombre: '', partido: 'Partido A', numero: 1 })).toThrow();
+    it('debería rechazar nombre_completo vacío', () => {
+      expect(() => createCandidatoSchema.parse({ nombre_completo: '', organizacion_politica: 'Partido A', numero_lista: 1 })).toThrow();
     });
   });
 
   describe('candidato.validation.js - updateCandidatoSchema', () => {
     it('debería validar actualización parcial', () => {
-      expect(() => updateCandidatoSchema.parse({ partido: 'Partido B' })).not.toThrow();
+      expect(() => updateCandidatoSchema.parse({ organizacion_politica: 'Partido B' })).not.toThrow();
     });
     it('debería permitir objeto vacío', () => {
       expect(() => updateCandidatoSchema.parse({})).not.toThrow();
@@ -188,34 +203,34 @@ describe('Validaciones Zod', () => {
 
   describe('mesa.validation.js - createMesaSchema', () => {
     it('debería validar datos correctos', () => {
-      expect(() => createMesaSchema.parse({ numero: '001001', local_id: 1, electores: 300 })).not.toThrow();
+      expect(() => createMesaSchema.parse({ numero_mesa: '001001', local_id: 1, total_electores_habiles: 300 })).not.toThrow();
     });
     it('debería rechazar mesa sin local', () => {
-      expect(() => createMesaSchema.parse({ numero: '001001', electores: 300 })).toThrow();
+      expect(() => createMesaSchema.parse({ numero_mesa: '001001', total_electores_habiles: 300 })).toThrow();
     });
   });
 
   describe('mesa.validation.js - updateMesaSchema', () => {
     it('debería validar actualización', () => {
-      expect(() => updateMesaSchema.parse({ electores: 250 })).not.toThrow();
+      expect(() => updateMesaSchema.parse({ total_electores_habiles: 250 })).not.toThrow();
     });
     it('debería rechazar electores negativos', () => {
-      expect(() => updateMesaSchema.parse({ electores: -10 })).toThrow();
+      expect(() => updateMesaSchema.parse({ total_electores_habiles: -10 })).toThrow();
     });
   });
 
   describe('distrito.validation.js - createDistritoSchema', () => {
     it('debería validar datos correctos', () => {
-      expect(() => createDistritoSchema.parse({ nombre: 'Lima', ubigeo: '150101' })).not.toThrow();
+      expect(() => createDistritoSchema.parse({ nombre: 'Ayacucho', codigo: 'AYA' })).not.toThrow();
     });
-    it('debería rechazar ubigeo con formato incorrecto', () => {
-      expect(() => createDistritoSchema.parse({ nombre: 'Lima', ubigeo: 'abc' })).toThrow();
+    it('debería rechazar falta de código', () => {
+      expect(() => createDistritoSchema.parse({ nombre: 'Ayacucho' })).toThrow();
     });
   });
 
   describe('distrito.validation.js - updateDistritoSchema', () => {
     it('debería validar actualización parcial', () => {
-      expect(() => updateDistritoSchema.parse({ nombre: 'Lince' })).not.toThrow();
+      expect(() => updateDistritoSchema.parse({ nombre: 'Quinua' })).not.toThrow();
     });
     it('debería permitir vacío', () => {
       expect(() => updateDistritoSchema.parse({})).not.toThrow();

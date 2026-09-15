@@ -78,7 +78,8 @@ describe('Auth Controller', () => {
   beforeAll(async () => {
     // Dynamic import after mocks are set
     authController = await import('../../src/controllers/auth.controller.js');
-    bcrypt = await import('bcryptjs');
+    const bcryptModule = await import('bcryptjs');
+    bcrypt = bcryptModule.default || bcryptModule;
   });
 
   beforeEach(() => {
@@ -215,10 +216,11 @@ describe('Auth Controller', () => {
     });
 
     it('debe retornar nuevo accessToken con refresh token válido', async () => {
-      const jwt = await import('jsonwebtoken');
-      const validRefresh = jwt.default.sign(
+      const jwtModule = await import('jsonwebtoken');
+      const jwt = jwtModule.default || jwtModule;
+      const validRefresh = jwt.sign(
         { id: 1, dni: '00000000', rol: 'admin' },
-        process.env.JWT_REFRESH_SECRET || 'refresh_secret',
+        process.env.JWT_REFRESH_SECRET || 'refresh',
         { expiresIn: '7d' }
       );
 
@@ -312,9 +314,8 @@ describe('Auth Controller', () => {
       });
       const res = mockRes();
 
-      const bcryptMod = await import('bcryptjs');
       mockDbChain.first.mockResolvedValueOnce({
-        id: 1, password_hash: await bcryptMod.hash('admin123', 12),
+        id: 1, password_hash: await bcrypt.hash('admin123', 12),
       });
 
       await authController.changePassword(req, res);
@@ -329,9 +330,8 @@ describe('Auth Controller', () => {
       });
       const res = mockRes();
 
-      const bcryptMod = await import('bcryptjs');
       mockDbChain.first.mockResolvedValueOnce({
-        id: 1, password_hash: await bcryptMod.hash('admin123', 12),
+        id: 1, password_hash: await bcrypt.hash('admin123', 12),
       });
       mockDbChain.update.mockResolvedValueOnce(1);
 

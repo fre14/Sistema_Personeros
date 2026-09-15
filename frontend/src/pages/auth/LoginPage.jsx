@@ -31,13 +31,14 @@ const LoginPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 to-blue-700 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-gradient-to-br from-red-950 via-red-900 to-red-800 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-white">
+        <div className="text-center text-4xl mb-2">🗳️</div>
+        <h2 className="text-center text-3xl font-extrabold text-white tracking-tight">
           Sistema Electoral
         </h2>
-        <p className="mt-2 text-center text-sm text-blue-200">
-          Huamanga 2026
+        <p className="mt-2 text-center text-sm text-red-200">
+          Huamanga 2026 • Control y Cómputo
         </p>
       </div>
 

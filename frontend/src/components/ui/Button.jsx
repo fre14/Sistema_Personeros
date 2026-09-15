@@ -15,10 +15,10 @@ const Button = ({
   const baseStyle = 'inline-flex justify-center items-center font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors';
   
   const variants = {
-    primary: 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 border border-transparent',
-    secondary: 'bg-white text-gray-700 hover:bg-gray-50 focus:ring-blue-500 border border-gray-300',
-    danger: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 border border-transparent',
-    success: 'bg-green-600 text-white hover:bg-green-700 focus:ring-green-500 border border-transparent',
+    primary: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 border border-transparent shadow-sm',
+    secondary: 'bg-white text-gray-700 hover:bg-gray-50 focus:ring-red-500 border border-gray-300 shadow-sm',
+    danger: 'bg-red-800 text-white hover:bg-red-900 focus:ring-red-500 border border-transparent shadow-sm',
+    success: 'bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-500 border border-transparent shadow-sm',
   };
 
   const sizes = {

@@ -12,9 +12,9 @@
     "migrate": "knex migrate:latest",
     "migrate:rollback": "knex migrate:rollback",
     "seed": "knex seed:run",
-    "test": "NODE_OPTIONS=--experimental-vm-modules npx jest --coverage --forceExit --detectOpenHandles",
-    "test:unit": "NODE_OPTIONS=--experimental-vm-modules npx jest tests/unit --coverage --forceExit",
-    "test:integration": "NODE_OPTIONS=--experimental-vm-modules npx jest tests/integration --coverage --forceExit --detectOpenHandles",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage --forceExit --detectOpenHandles",
+    "test:unit": "node --experimental-vm-modules node_modules/jest/bin/jest.js tests/unit --coverage --forceExit",
+    "test:integration": "node --experimental-vm-modules node_modules/jest/bin/jest.js tests/integration --coverage --forceExit --detectOpenHandles",
     "test:load": "echo 'Run: k6 run tests/load/load-full-scenario.js'"
   },
   "dependencies": {

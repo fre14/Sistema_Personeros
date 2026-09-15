@@ -1,10 +1,369 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { get, post, del } from '../../services/api';
+import Card from '../../components/ui/Card';
+import Table from '../../components/ui/Table';
+import Button from '../../components/ui/Button';
+import Modal from '../../components/ui/Modal';
+import Select from '../../components/ui/Select';
+import toast from 'react-hot-toast';
+import { ClipboardList, UserCheck, Shield, Trash2, Plus } from 'lucide-react';
 
 const AsignacionesPage = () => {
+  const [activeTab, setActiveTab] = useState('personeros'); // 'personeros' | 'coordinadores'
+  const [asignacionesPersoneros, setAsignacionesPersoneros] = useState([]);
+  const [asignacionesCoordinadores, setAsignacionesCoordinadores] = useState([]);
+  const [personerosDisponibles, setPersonerosDisponibles] = useState([]);
+  const [coordinadoresDisponibles, setCoordinadoresDisponibles] = useState([]);
+  const [mesasDisponibles, setMesasDisponibles] = useState([]);
+  const [localesDisponibles, setLocalesDisponibles] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  // Modal State
+  const [modalPersoneroOpen, setModalPersoneroOpen] = useState(false);
+  const [modalCoordinadorOpen, setModalCoordinadorOpen] = useState(false);
+  const [selectedUsuarioId, setSelectedUsuarioId] = useState('');
+  const [selectedMesaId, setSelectedMesaId] = useState('');
+  const [selectedLocalId, setSelectedLocalId] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchData();
+  }, [activeTab]);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      if (activeTab === 'personeros') {
+        const [asigRes, usersRes, mesasRes] = await Promise.all([
+          get('/asignaciones/personeros'),
+          get('/usuarios?rol=personero'),
+          get('/mesas?limit=200')
+        ]);
+        setAsignacionesPersoneros(asigRes.data?.data || asigRes.data || []);
+        setPersonerosDisponibles(usersRes.data?.data || usersRes.data || []);
+        setMesasDisponibles(mesasRes.data?.data || mesasRes.data || []);
+      } else {
+        const [asigRes, usersRes, localesRes] = await Promise.all([
+          get('/asignaciones/coordinadores'),
+          get('/usuarios?rol=coordinador'),
+          get('/locales')
+        ]);
+        setAsignacionesCoordinadores(asigRes.data?.data || asigRes.data || []);
+        setCoordinadoresDisponibles(usersRes.data?.data || usersRes.data || []);
+        setLocalesDisponibles(localesRes.data?.data || localesRes.data || []);
+      }
+    } catch (error) {
+      console.error('Error cargando asignaciones:', error);
+      toast.error('Error al cargar datos');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenAssignPersonero = () => {
+    setSelectedUsuarioId(personerosDisponibles.length > 0 ? String(personerosDisponibles[0].id) : '');
+    setSelectedMesaId(mesasDisponibles.length > 0 ? String(mesasDisponibles[0].id) : '');
+    setModalPersoneroOpen(true);
+  };
+
+  const handleOpenAssignCoordinador = () => {
+    setSelectedUsuarioId(coordinadoresDisponibles.length > 0 ? String(coordinadoresDisponibles[0].id) : '');
+    setSelectedLocalId(localesDisponibles.length > 0 ? String(localesDisponibles[0].id) : '');
+    setModalCoordinadorOpen(true);
+  };
+
+  const handleSavePersonero = async (e) => {
+    e.preventDefault();
+    if (!selectedUsuarioId || !selectedMesaId) {
+      toast.error('Seleccione personero y mesa');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await post('/asignaciones/personeros', {
+        usuario_id: Number(selectedUsuarioId),
+        mesa_id: Number(selectedMesaId)
+      });
+      toast.success('Personero asignado exitosamente');
+      setModalPersoneroOpen(false);
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Error al asignar personero (mesa posiblemente ya ocupada)');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveCoordinador = async (e) => {
+    e.preventDefault();
+    if (!selectedUsuarioId || !selectedLocalId) {
+      toast.error('Seleccione coordinador y local');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await post('/asignaciones/coordinadores', {
+        usuario_id: Number(selectedUsuarioId),
+        local_id: Number(selectedLocalId)
+      });
+      toast.success('Coordinador asignado exitosamente');
+      setModalCoordinadorOpen(false);
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Error al asignar coordinador');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeletePersonero = async (id, nombre, mesa) => {
+    if (!window.confirm(`¿Desea desasignar a ${nombre} de la Mesa ${mesa}?`)) return;
+
+    try {
+      await del(`/asignaciones/personeros/${id}`);
+      toast.success('Asignación cancelada');
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Error al desasignar');
+    }
+  };
+
+  const handleDeleteCoordinador = async (id, nombre, local) => {
+    if (!window.confirm(`¿Desea desasignar a ${nombre} del local "${local}"?`)) return;
+
+    try {
+      await del(`/asignaciones/coordinadores/${id}`);
+      toast.success('Asignación cancelada');
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Error al desasignar');
+    }
+  };
+
+  const personeroOptions = personerosDisponibles.map(u => ({
+    label: `${u.dni} - ${u.nombres} ${u.apellidos}`,
+    value: String(u.id)
+  }));
+
+  const mesaOptions = mesasDisponibles.map(m => ({
+    label: `Mesa ${m.numero_mesa} (${m.local_nombre || 'Local'})`,
+    value: String(m.id)
+  }));
+
+  const coordinadorOptions = coordinadoresDisponibles.map(u => ({
+    label: `${u.dni} - ${u.nombres} ${u.apellidos}`,
+    value: String(u.id)
+  }));
+
+  const localOptions = localesDisponibles.map(l => ({
+    label: `${l.nombre} (${l.distrito_nombre || 'Ayacucho'})`,
+    value: String(l.id)
+  }));
+
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Gestión de Asignaciones</h1>
-      <p>Página en construcción.</p>
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center">
+            <ClipboardList className="mr-2 text-red-600" size={28} />
+            Asignaciones de Personal
+          </h1>
+          <p className="text-sm text-gray-500">Distribución de personeros y coordinadores por mesas y locales</p>
+        </div>
+
+        {activeTab === 'personeros' ? (
+          <Button onClick={handleOpenAssignPersonero} className="flex items-center">
+            <Plus size={18} className="mr-1" />
+            Asignar a Mesa
+          </Button>
+        ) : (
+          <Button onClick={handleOpenAssignCoordinador} className="flex items-center">
+            <Plus size={18} className="mr-1" />
+            Asignar a Local
+          </Button>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('personeros')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center transition-colors ${
+              activeTab === 'personeros'
+                ? 'border-red-600 text-red-600 font-bold'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <UserCheck size={18} className="mr-2" />
+            Personeros de Mesa ({asignacionesPersoneros.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('coordinadores')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center transition-colors ${
+              activeTab === 'coordinadores'
+                ? 'border-red-600 text-red-600 font-bold'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <Shield size={18} className="mr-2" />
+            Coordinadores de Local ({asignacionesCoordinadores.length})
+          </button>
+        </nav>
+      </div>
+
+      <Card>
+        {activeTab === 'personeros' ? (
+          <Table headers={['DNI', 'Personero Titular', 'N° Mesa', 'Local de Votación', 'Acciones']}>
+            {asignacionesPersoneros.map((asig) => (
+              <tr key={asig.id} className="hover:bg-gray-50 transition-colors">
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 font-semibold">
+                  {asig.dni}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  {asig.nombres} {asig.apellidos}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-red-700">
+                  Mesa {asig.numero_mesa}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                  {asig.local_nombre || 'Local'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                  <button
+                    onClick={() => handleDeletePersonero(asig.id, asig.nombres, asig.numero_mesa)}
+                    className="text-red-600 hover:text-red-900 inline-flex items-center transition-colors"
+                  >
+                    <Trash2 size={16} className="mr-1" />
+                    Desasignar
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {asignacionesPersoneros.length === 0 && !loading && (
+              <tr>
+                <td colSpan={5} className="px-6 py-10 text-center text-sm text-gray-500">
+                  No hay personeros asignados actualmente. Use el botón "Asignar a Mesa" para comenzar.
+                </td>
+              </tr>
+            )}
+          </Table>
+        ) : (
+          <Table headers={['DNI', 'Coordinador Responsable', 'Local de Votación Asignado', 'Acciones']}>
+            {asignacionesCoordinadores.map((asig) => (
+              <tr key={asig.id} className="hover:bg-gray-50 transition-colors">
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 font-semibold">
+                  {asig.dni}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  {asig.nombres} {asig.apellidos}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-800">
+                  {asig.local_nombre}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                  <button
+                    onClick={() => handleDeleteCoordinador(asig.id, asig.nombres, asig.local_nombre)}
+                    className="text-red-600 hover:text-red-900 inline-flex items-center transition-colors"
+                  >
+                    <Trash2 size={16} className="mr-1" />
+                    Desasignar
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {asignacionesCoordinadores.length === 0 && !loading && (
+              <tr>
+                <td colSpan={4} className="px-6 py-10 text-center text-sm text-gray-500">
+                  No hay coordinadores asignados actualmente.
+                </td>
+              </tr>
+            )}
+          </Table>
+        )}
+      </Card>
+
+      {/* Modal Asignar Personero */}
+      <Modal
+        isOpen={modalPersoneroOpen}
+        onClose={() => setModalPersoneroOpen(false)}
+        title="Asignar Personero a Mesa"
+      >
+        <form onSubmit={handleSavePersonero} className="space-y-4">
+          <Select
+            label="Seleccionar Personero Registrado"
+            options={personeroOptions}
+            value={selectedUsuarioId}
+            onChange={(e) => setSelectedUsuarioId(e.target.value)}
+            required
+          />
+
+          <Select
+            label="Seleccionar Mesa de Sufragio"
+            options={mesaOptions}
+            value={selectedMesaId}
+            onChange={(e) => setSelectedMesaId(e.target.value)}
+            required
+          />
+
+          <div className="mt-6 flex justify-end gap-3 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setModalPersoneroOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              isLoading={saving}
+            >
+              Confirmar Asignación
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal Asignar Coordinador */}
+      <Modal
+        isOpen={modalCoordinadorOpen}
+        onClose={() => setModalCoordinadorOpen(false)}
+        title="Asignar Coordinador a Local de Votación"
+      >
+        <form onSubmit={handleSaveCoordinador} className="space-y-4">
+          <Select
+            label="Seleccionar Coordinador Registrado"
+            options={coordinadorOptions}
+            value={selectedUsuarioId}
+            onChange={(e) => setSelectedUsuarioId(e.target.value)}
+            required
+          />
+
+          <Select
+            label="Seleccionar Local de Votación"
+            options={localOptions}
+            value={selectedLocalId}
+            onChange={(e) => setSelectedLocalId(e.target.value)}
+            required
+          />
+
+          <div className="mt-6 flex justify-end gap-3 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setModalCoordinadorOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              isLoading={saving}
+            >
+              Confirmar Asignación
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 };

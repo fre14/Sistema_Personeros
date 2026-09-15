@@ -21,6 +21,6 @@ export default {
   testMatch: [
     '**/tests/**/*.test.js',
   ],
-  setupFilesAfterSetup: [],
+  setupFilesAfterEnv: [],
   testTimeout: 30000,
 };

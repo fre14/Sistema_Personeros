@@ -11,7 +11,7 @@ const Input = forwardRef(({ label, error, type = 'text', className = '', ...prop
       <input
         ref={ref}
         type={type}
-        className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${
+        className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm ${
           error ? 'border-red-300 text-red-900 placeholder-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
         }`}
         {...props}
