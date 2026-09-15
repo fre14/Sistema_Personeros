@@ -144,17 +144,28 @@ export const reasignarCoordinador = async (req, res) => {
 
 export const getAsignacionesPersoneros = async (req, res) => {
   try {
-    const { local_id, distrito_id } = req.query;
+    const { local_id, distrito_id, q } = req.query;
     let query = db('asignacion_personeros')
       .join('usuarios', 'asignacion_personeros.usuario_id', 'usuarios.id')
       .join('mesas', 'asignacion_personeros.mesa_id', 'mesas.id')
       .join('locales', 'mesas.local_id', 'locales.id')
-      .select('asignacion_personeros.*', 'usuarios.nombres', 'usuarios.apellidos', 'usuarios.dni', 'mesas.numero_mesa', 'locales.nombre as local_nombre');
+      .join('distritos', 'locales.distrito_id', 'distritos.id')
+      .select('asignacion_personeros.*', 'usuarios.nombres', 'usuarios.apellidos', 'usuarios.dni', 'mesas.numero_mesa', 'locales.nombre as local_nombre', 'distritos.nombre as distrito_nombre')
+      .where('asignacion_personeros.activo', true);
       
     if (local_id) query = query.where('mesas.local_id', local_id);
     if (distrito_id) query = query.where('locales.distrito_id', distrito_id);
+    if (q) {
+      query = query.where(function() {
+        this.where('usuarios.dni', 'ilike', `%${q}%`)
+          .orWhere('usuarios.nombres', 'ilike', `%${q}%`)
+          .orWhere('usuarios.apellidos', 'ilike', `%${q}%`)
+          .orWhere('mesas.numero_mesa', 'ilike', `%${q}%`)
+          .orWhere('locales.nombre', 'ilike', `%${q}%`);
+      });
+    }
     
-    const list = await query.where('asignacion_personeros.activo', true);
+    const list = await query.orderBy('mesas.numero_mesa', 'asc');
     res.json({ success: true, data: list, message: 'Asignaciones de personeros listadas' });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error listando asignaciones', error: error.message });
@@ -163,12 +174,26 @@ export const getAsignacionesPersoneros = async (req, res) => {
 
 export const getAsignacionesCoordinadores = async (req, res) => {
   try {
-    const list = await db('asignacion_coordinadores')
+    const { local_id, distrito_id, q } = req.query;
+    let query = db('asignacion_coordinadores')
       .join('usuarios', 'asignacion_coordinadores.usuario_id', 'usuarios.id')
       .join('locales', 'asignacion_coordinadores.local_id', 'locales.id')
-      .select('asignacion_coordinadores.*', 'usuarios.nombres', 'usuarios.apellidos', 'usuarios.dni', 'locales.nombre as local_nombre')
+      .join('distritos', 'locales.distrito_id', 'distritos.id')
+      .select('asignacion_coordinadores.*', 'usuarios.nombres', 'usuarios.apellidos', 'usuarios.dni', 'locales.nombre as local_nombre', 'distritos.nombre as distrito_nombre')
       .where('asignacion_coordinadores.activo', true);
       
+    if (local_id) query = query.where('asignacion_coordinadores.local_id', local_id);
+    if (distrito_id) query = query.where('locales.distrito_id', distrito_id);
+    if (q) {
+      query = query.where(function() {
+        this.where('usuarios.dni', 'ilike', `%${q}%`)
+          .orWhere('usuarios.nombres', 'ilike', `%${q}%`)
+          .orWhere('usuarios.apellidos', 'ilike', `%${q}%`)
+          .orWhere('locales.nombre', 'ilike', `%${q}%`);
+      });
+    }
+      
+    const list = await query.orderBy('locales.nombre', 'asc');
     res.json({ success: true, data: list, message: 'Asignaciones de coordinadores listadas' });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error listando asignaciones', error: error.message });

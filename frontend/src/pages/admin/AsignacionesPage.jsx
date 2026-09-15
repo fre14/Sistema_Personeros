@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { get, post, del } from '../../services/api';
 import Card from '../../components/ui/Card';
 import Table from '../../components/ui/Table';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
 import Select from '../../components/ui/Select';
+import SearchInput from '../../components/ui/SearchInput';
 import toast from 'react-hot-toast';
-import { ClipboardList, UserCheck, Shield, Trash2, Plus } from 'lucide-react';
+import { ClipboardList, UserCheck, Shield, Trash2, Plus, Filter, X } from 'lucide-react';
 
 const AsignacionesPage = () => {
   const [activeTab, setActiveTab] = useState('personeros'); // 'personeros' | 'coordinadores'
@@ -16,7 +17,13 @@ const AsignacionesPage = () => {
   const [coordinadoresDisponibles, setCoordinadoresDisponibles] = useState([]);
   const [mesasDisponibles, setMesasDisponibles] = useState([]);
   const [localesDisponibles, setLocalesDisponibles] = useState([]);
+  const [distritos, setDistritos] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // Advanced Filters
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedDistrito, setSelectedDistrito] = useState('');
+  const [selectedLocal, setSelectedLocal] = useState('');
 
   // Modal State
   const [modalPersoneroOpen, setModalPersoneroOpen] = useState(false);
@@ -27,30 +34,50 @@ const AsignacionesPage = () => {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    fetchDistritos();
+  }, []);
+
+  useEffect(() => {
     fetchData();
-  }, [activeTab]);
+  }, [activeTab, searchTerm, selectedDistrito, selectedLocal]);
+
+  const fetchDistritos = async () => {
+    try {
+      const [distRes, locRes] = await Promise.all([
+        get('/distritos'),
+        get('/locales')
+      ]);
+      setDistritos(distRes.data?.data || distRes.data || []);
+      setLocalesDisponibles(locRes.data?.data || locRes.data || []);
+    } catch (error) {
+      console.error('Error cargando distritos y locales:', error);
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      let params = `?t=${Date.now()}`;
+      if (searchTerm) params += `&q=${encodeURIComponent(searchTerm)}`;
+      if (selectedDistrito) params += `&distrito_id=${selectedDistrito}`;
+      if (selectedLocal) params += `&local_id=${selectedLocal}`;
+
       if (activeTab === 'personeros') {
         const [asigRes, usersRes, mesasRes] = await Promise.all([
-          get('/asignaciones/personeros'),
+          get(`/asignaciones/personeros${params}`),
           get('/usuarios?rol=personero'),
-          get('/mesas?limit=200')
+          get('/mesas?limit=500')
         ]);
         setAsignacionesPersoneros(asigRes.data?.data || asigRes.data || []);
         setPersonerosDisponibles(usersRes.data?.data || usersRes.data || []);
         setMesasDisponibles(mesasRes.data?.data || mesasRes.data || []);
       } else {
-        const [asigRes, usersRes, localesRes] = await Promise.all([
-          get('/asignaciones/coordinadores'),
-          get('/usuarios?rol=coordinador'),
-          get('/locales')
+        const [asigRes, usersRes] = await Promise.all([
+          get(`/asignaciones/coordinadores${params}`),
+          get('/usuarios?rol=coordinador')
         ]);
         setAsignacionesCoordinadores(asigRes.data?.data || asigRes.data || []);
         setCoordinadoresDisponibles(usersRes.data?.data || usersRes.data || []);
-        setLocalesDisponibles(localesRes.data?.data || localesRes.data || []);
       }
     } catch (error) {
       console.error('Error cargando asignaciones:', error);
@@ -58,6 +85,23 @@ const AsignacionesPage = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Filter locales by selected district in the filter bar
+  const filteredLocalesForFilter = useMemo(() => {
+    if (!selectedDistrito) return localesDisponibles;
+    return localesDisponibles.filter(l => String(l.distrito_id) === String(selectedDistrito));
+  }, [localesDisponibles, selectedDistrito]);
+
+  const handleDistritoChange = (e) => {
+    setSelectedDistrito(e.target.value);
+    setSelectedLocal('');
+  };
+
+  const handleResetFilters = () => {
+    setSearchTerm('');
+    setSelectedDistrito('');
+    setSelectedLocal('');
   };
 
   const handleOpenAssignPersonero = () => {
@@ -142,6 +186,8 @@ const AsignacionesPage = () => {
     }
   };
 
+  const hasActiveFilters = searchTerm || selectedDistrito || selectedLocal;
+
   const personeroOptions = personerosDisponibles.map(u => ({
     label: `${u.dni} - ${u.nombres} ${u.apellidos}`,
     value: String(u.id)
@@ -170,7 +216,7 @@ const AsignacionesPage = () => {
             <ClipboardList className="mr-2 text-red-600" size={28} />
             Asignaciones de Personal
           </h1>
-          <p className="text-sm text-gray-500">Distribución de personeros y coordinadores por mesas y locales</p>
+          <p className="text-sm text-gray-500">Distribución y control de personeros y coordinadores electorales</p>
         </div>
 
         {activeTab === 'personeros' ? (
@@ -190,7 +236,7 @@ const AsignacionesPage = () => {
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex space-x-8">
           <button
-            onClick={() => setActiveTab('personeros')}
+            onClick={() => { setActiveTab('personeros'); handleResetFilters(); }}
             className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center transition-colors ${
               activeTab === 'personeros'
                 ? 'border-red-600 text-red-600 font-bold'
@@ -201,7 +247,7 @@ const AsignacionesPage = () => {
             Personeros de Mesa ({asignacionesPersoneros.length})
           </button>
           <button
-            onClick={() => setActiveTab('coordinadores')}
+            onClick={() => { setActiveTab('coordinadores'); handleResetFilters(); }}
             className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center transition-colors ${
               activeTab === 'coordinadores'
                 ? 'border-red-600 text-red-600 font-bold'
@@ -215,8 +261,73 @@ const AsignacionesPage = () => {
       </div>
 
       <Card>
+        {/* Panel de Búsqueda Avanzada */}
+        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-700 flex items-center">
+              <Filter size={14} className="mr-1.5 text-red-600" />
+              Búsqueda Avanzada por Distrito y Local
+            </span>
+            {hasActiveFilters && (
+              <button
+                onClick={handleResetFilters}
+                className="text-xs text-red-600 hover:text-red-800 font-semibold flex items-center transition-colors"
+              >
+                <X size={13} className="mr-1" />
+                Limpiar Filtros
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Buscador */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                {activeTab === 'personeros' ? 'Buscar DNI, Personero o Mesa' : 'Buscar DNI o Coordinador'}
+              </label>
+              <SearchInput
+                onSearch={setSearchTerm}
+                placeholder="Ej: 74725178 o Juan..."
+              />
+            </div>
+
+            {/* Filtro Distrito */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Filtrar por Distrito</label>
+              <select
+                value={selectedDistrito}
+                onChange={handleDistritoChange}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
+              >
+                <option value="">Todos los distritos (16)</option>
+                {distritos.map(d => (
+                  <option key={d.id} value={String(d.id)}>{d.nombre}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro Local */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Local de Votación {selectedDistrito && `(${filteredLocalesForFilter.length})`}
+              </label>
+              <select
+                value={selectedLocal}
+                onChange={(e) => setSelectedLocal(e.target.value)}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
+              >
+                <option value="">Todos los locales</option>
+                {filteredLocalesForFilter.map(l => (
+                  <option key={l.id} value={String(l.id)}>{l.nombre}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Tablas de Resultados */}
         {activeTab === 'personeros' ? (
-          <Table headers={['DNI', 'Personero Titular', 'N° Mesa', 'Local de Votación', 'Acciones']}>
+          <Table headers={['DNI', 'Personero Titular', 'N° Mesa', 'Local de Votación', 'Distrito', 'Acciones']}>
             {asignacionesPersoneros.map((asig) => (
               <tr key={asig.id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 font-semibold">
@@ -225,11 +336,14 @@ const AsignacionesPage = () => {
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                   {asig.nombres} {asig.apellidos}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-red-700">
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-extrabold text-red-700">
                   Mesa {asig.numero_mesa}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                   {asig.local_nombre || 'Local'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-medium">
+                  {asig.distrito_nombre || 'Ayacucho'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <button
@@ -244,14 +358,14 @@ const AsignacionesPage = () => {
             ))}
             {asignacionesPersoneros.length === 0 && !loading && (
               <tr>
-                <td colSpan={5} className="px-6 py-10 text-center text-sm text-gray-500">
-                  No hay personeros asignados actualmente. Use el botón "Asignar a Mesa" para comenzar.
+                <td colSpan={6} className="px-6 py-10 text-center text-sm text-gray-500">
+                  No se encontraron asignaciones de personeros con los filtros seleccionados.
                 </td>
               </tr>
             )}
           </Table>
         ) : (
-          <Table headers={['DNI', 'Coordinador Responsable', 'Local de Votación Asignado', 'Acciones']}>
+          <Table headers={['DNI', 'Coordinador Responsable', 'Local de Votación Asignado', 'Distrito', 'Acciones']}>
             {asignacionesCoordinadores.map((asig) => (
               <tr key={asig.id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 font-semibold">
@@ -262,6 +376,9 @@ const AsignacionesPage = () => {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-800">
                   {asig.local_nombre}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-medium">
+                  {asig.distrito_nombre || 'Ayacucho'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <button
@@ -276,8 +393,8 @@ const AsignacionesPage = () => {
             ))}
             {asignacionesCoordinadores.length === 0 && !loading && (
               <tr>
-                <td colSpan={4} className="px-6 py-10 text-center text-sm text-gray-500">
-                  No hay coordinadores asignados actualmente.
+                <td colSpan={5} className="px-6 py-10 text-center text-sm text-gray-500">
+                  No se encontraron asignaciones de coordinadores con los filtros seleccionados.
                 </td>
               </tr>
             )}
@@ -289,7 +406,7 @@ const AsignacionesPage = () => {
       <Modal
         isOpen={modalPersoneroOpen}
         onClose={() => setModalPersoneroOpen(false)}
-        title="Asignar Personero a Mesa"
+        title="Asignar Personero a Mesa de Sufragio"
       >
         <form onSubmit={handleSavePersonero} className="space-y-4">
           <Select

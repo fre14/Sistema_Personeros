@@ -3,7 +3,7 @@ import { registrarAuditoria } from '../services/auditoria.service.js';
 
 export const getAll = async (req, res) => {
   try {
-    const { local_id, distrito_id, estado, page = 1, limit = 50 } = req.query;
+    const { local_id, distrito_id, estado, q, page = 1, limit = 50 } = req.query;
     let query = db('mesas')
       .join('locales', 'mesas.local_id', 'locales.id')
       .join('distritos', 'locales.distrito_id', 'distritos.id')
@@ -12,6 +12,12 @@ export const getAll = async (req, res) => {
     if (local_id) query = query.where('mesas.local_id', local_id);
     if (distrito_id) query = query.where('locales.distrito_id', distrito_id);
     if (estado) query = query.where('mesas.estado', estado);
+    if (q) {
+      query = query.where(function() {
+        this.where('mesas.numero_mesa', 'ilike', `%${q}%`)
+          .orWhere('locales.nombre', 'ilike', `%${q}%`);
+      });
+    }
     
     const totalQuery = query.clone().clearSelect().count('* as total').first();
     const [totalRes, mesas] = await Promise.all([

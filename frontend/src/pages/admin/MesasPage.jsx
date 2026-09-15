@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { get, post, put, del } from '../../services/api';
+import React, { useState, useEffect, useMemo } from 'react';
+import { get, post, del } from '../../services/api';
 import Card from '../../components/ui/Card';
 import Table from '../../components/ui/Table';
 import Button from '../../components/ui/Button';
@@ -9,15 +9,19 @@ import Input from '../../components/ui/Input';
 import Select from '../../components/ui/Select';
 import Badge from '../../components/ui/Badge';
 import toast from 'react-hot-toast';
-import { Inbox, Plus, Trash2, Users } from 'lucide-react';
+import { Inbox, Plus, Trash2, Filter, X } from 'lucide-react';
 
 const MesasPage = () => {
   const [mesas, setMesas] = useState([]);
   const [locales, setLocales] = useState([]);
+  const [distritos, setDistritos] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // Advanced Filters
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedEstado, setSelectedEstado] = useState('');
+  const [selectedDistrito, setSelectedDistrito] = useState('');
   const [selectedLocal, setSelectedLocal] = useState('');
+  const [selectedEstado, setSelectedEstado] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalMesas, setTotalMesas] = useState(0);
@@ -30,38 +34,43 @@ const MesasPage = () => {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchLocales();
+    fetchInitialFilters();
   }, []);
 
   useEffect(() => {
     fetchMesas();
-  }, [searchTerm, selectedEstado, selectedLocal, page]);
+  }, [searchTerm, selectedDistrito, selectedLocal, selectedEstado, page]);
 
-  const fetchLocales = async () => {
+  const fetchInitialFilters = async () => {
     try {
-      const res = await get('/locales');
-      setLocales(res.data?.data || res.data || []);
+      const [distRes, locRes] = await Promise.all([
+        get('/distritos'),
+        get('/locales')
+      ]);
+      setDistritos(distRes.data?.data || distRes.data || []);
+      setLocales(locRes.data?.data || locRes.data || []);
     } catch (error) {
-      console.error('Error cargando locales:', error);
+      console.error('Error cargando filtros iniciales:', error);
     }
   };
 
   const fetchMesas = async () => {
     setLoading(true);
     try {
-      let url = `/mesas?page=${page}&limit=20`;
+      let url = `/mesas?page=${page}&limit=25`;
       if (searchTerm) url += `&q=${encodeURIComponent(searchTerm)}`;
-      if (selectedEstado) url += `&estado=${selectedEstado}`;
+      if (selectedDistrito) url += `&distrito_id=${selectedDistrito}`;
       if (selectedLocal) url += `&local_id=${selectedLocal}`;
+      if (selectedEstado) url += `&estado=${selectedEstado}`;
 
       const res = await get(url);
       const data = res.data?.data || res.data || [];
       const meta = res.data?.meta || {};
       
       setMesas(data);
-      if (meta.total) {
+      if (meta.total !== undefined) {
         setTotalMesas(meta.total);
-        setTotalPages(Math.ceil(meta.total / 20));
+        setTotalPages(Math.ceil(meta.total / 25));
       }
     } catch (error) {
       console.error('Error cargando mesas:', error);
@@ -69,6 +78,26 @@ const MesasPage = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Filter locales by selected district in the filter bar
+  const filteredLocalesForFilter = useMemo(() => {
+    if (!selectedDistrito) return locales;
+    return locales.filter(l => String(l.distrito_id) === String(selectedDistrito));
+  }, [locales, selectedDistrito]);
+
+  const handleDistritoChange = (e) => {
+    setSelectedDistrito(e.target.value);
+    setSelectedLocal(''); // reset local if district changes
+    setPage(1);
+  };
+
+  const handleResetFilters = () => {
+    setSearchTerm('');
+    setSelectedDistrito('');
+    setSelectedLocal('');
+    setSelectedEstado('');
+    setPage(1);
   };
 
   const handleOpenCreate = () => {
@@ -85,7 +114,7 @@ const MesasPage = () => {
       return;
     }
     if (!localId) {
-      toast.error('Seleccione el local');
+      toast.error('Seleccione el local de votación');
       return;
     }
 
@@ -114,16 +143,11 @@ const MesasPage = () => {
       toast.success(`Mesa ${num} eliminada`);
       fetchMesas();
     } catch (error) {
-      toast.error(error.response?.data?.message || 'No se puede eliminar la mesa si ya tiene votos registrados');
+      toast.error(error.response?.data?.message || 'No se puede eliminar la mesa');
     }
   };
 
-  const localOptions = [
-    { label: 'Todos los locales', value: '' },
-    ...locales.map(l => ({ label: l.nombre, value: String(l.id) }))
-  ];
-
-  const modalLocalOptions = locales.map(l => ({ label: l.nombre, value: String(l.id) }));
+  const hasActiveFilters = searchTerm || selectedDistrito || selectedLocal || selectedEstado;
 
   const estadoOptions = [
     { label: 'Todos los estados', value: '' },
@@ -142,7 +166,7 @@ const MesasPage = () => {
             Mesas de Sufragio
           </h1>
           <p className="text-sm text-gray-500">
-            {totalMesas > 0 ? `${totalMesas} mesas registradas` : 'Control de mesas electorales oficiales'}
+            {totalMesas} mesas registradas • Padrón electoral oficial Huamanga 2026
           </p>
         </div>
         <Button onClick={handleOpenCreate} className="flex items-center">
@@ -152,37 +176,83 @@ const MesasPage = () => {
       </div>
 
       <Card>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div>
-            <SearchInput
-              onSearch={(val) => { setSearchTerm(val); setPage(1); }}
-              placeholder="Buscar por número de mesa..."
-            />
+        {/* Panel de Búsqueda Avanzada */}
+        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-700 flex items-center">
+              <Filter size={14} className="mr-1.5 text-red-600" />
+              Búsqueda Avanzada y Filtros
+            </span>
+            {hasActiveFilters && (
+              <button
+                onClick={handleResetFilters}
+                className="text-xs text-red-600 hover:text-red-800 font-semibold flex items-center transition-colors"
+              >
+                <X size={13} className="mr-1" />
+                Limpiar Filtros
+              </button>
+            )}
           </div>
-          <div>
-            <select
-              value={selectedEstado}
-              onChange={(e) => { setSelectedEstado(e.target.value); setPage(1); }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
-            >
-              {estadoOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <select
-              value={selectedLocal}
-              onChange={(e) => { setSelectedLocal(e.target.value); setPage(1); }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
-            >
-              {localOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Buscador de texto */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Buscar por N° o Local</label>
+              <SearchInput
+                onSearch={(val) => { setSearchTerm(val); setPage(1); }}
+                placeholder="Ej: 009434 o Guamán..."
+              />
+            </div>
+
+            {/* Filtro por Distrito */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Filtrar por Distrito</label>
+              <select
+                value={selectedDistrito}
+                onChange={handleDistritoChange}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
+              >
+                <option value="">Todos los distritos (16)</option>
+                {distritos.map(d => (
+                  <option key={d.id} value={String(d.id)}>{d.nombre}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro por Local de Votación (dependiente del distrito) */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Local de Votación {selectedDistrito && `(${filteredLocalesForFilter.length})`}
+              </label>
+              <select
+                value={selectedLocal}
+                onChange={(e) => { setSelectedLocal(e.target.value); setPage(1); }}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
+              >
+                <option value="">Todos los locales</option>
+                {filteredLocalesForFilter.map(l => (
+                  <option key={l.id} value={String(l.id)}>{l.nombre}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro por Estado */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Estado de Transmisión</label>
+              <select
+                value={selectedEstado}
+                onChange={(e) => { setSelectedEstado(e.target.value); setPage(1); }}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
+              >
+                {estadoOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
+        {/* Tabla de Mesas */}
         <Table headers={['N° Mesa', 'Local de Votación', 'Distrito', 'Electores', 'Estado', 'Acciones']}>
           {mesas.map((mesa) => (
             <tr key={mesa.id} className="hover:bg-gray-50 transition-colors">
@@ -192,11 +262,11 @@ const MesasPage = () => {
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                 {mesa.local_nombre || 'Local asignado'}
               </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-medium">
                 {mesa.distrito_nombre || 'Ayacucho'}
               </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 font-medium">
-                {mesa.total_electores_habiles} hab.
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                {mesa.total_electores_habiles} electores
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <Badge variant={mesa.estado}>{mesa.estado}</Badge>
@@ -224,22 +294,22 @@ const MesasPage = () => {
 
         {/* Paginación */}
         {totalPages > 1 && (
-          <div className="mt-4 flex items-center justify-between border-t border-gray-200 pt-4">
-            <span className="text-sm text-gray-700">
-              Página <span className="font-semibold">{page}</span> de <span className="font-semibold">{totalPages}</span>
+          <div className="mt-4 flex flex-col sm:flex-row items-center justify-between border-t border-gray-200 pt-4 gap-3">
+            <span className="text-sm text-gray-600">
+              Mostrando página <span className="font-bold text-gray-900">{page}</span> de <span className="font-bold text-gray-900">{totalPages}</span> ({totalMesas} mesas totales)
             </span>
             <div className="flex gap-2">
               <button
                 disabled={page <= 1}
                 onClick={() => setPage(page - 1)}
-                className="px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-40 hover:bg-gray-50"
+                className="px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-40 hover:bg-gray-50 font-medium transition-colors"
               >
                 Anterior
               </button>
               <button
                 disabled={page >= totalPages}
                 onClick={() => setPage(page + 1)}
-                className="px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-40 hover:bg-gray-50"
+                className="px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-40 hover:bg-gray-50 font-medium transition-colors"
               >
                 Siguiente
               </button>
@@ -261,12 +331,12 @@ const MesasPage = () => {
             maxLength={6}
             value={numeroMesa}
             onChange={(e) => setNumeroMesa(e.target.value.replace(/\D/g, ''))}
-            placeholder="Ej: 001001"
+            placeholder="Ej: 009434"
           />
 
           <Select
             label="Local de Votación"
-            options={modalLocalOptions}
+            options={locales.map(l => ({ label: `${l.nombre} (${l.distrito_nombre || ''})`, value: String(l.id) }))}
             value={localId}
             onChange={(e) => setLocalId(e.target.value)}
             required

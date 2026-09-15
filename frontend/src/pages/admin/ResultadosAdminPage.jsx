@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { get } from '../../services/api';
 import Card from '../../components/ui/Card';
 import Table from '../../components/ui/Table';
@@ -7,14 +7,23 @@ import Badge from '../../components/ui/Badge';
 import Modal from '../../components/ui/Modal';
 import SearchInput from '../../components/ui/SearchInput';
 import toast from 'react-hot-toast';
-import { BarChart3, Eye, FileText, CheckCircle2, AlertTriangle, Image as ImageIcon } from 'lucide-react';
+import { BarChart3, Eye, FileText, CheckCircle2, AlertTriangle, Image as ImageIcon, Filter, X } from 'lucide-react';
 
 const ResultadosAdminPage = () => {
   const [mesas, setMesas] = useState([]);
+  const [locales, setLocales] = useState([]);
+  const [distritos, setDistritos] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedEstado, setSelectedEstado] = useState('');
   const [resumen, setResumen] = useState(null);
+
+  // Advanced Filters
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedDistrito, setSelectedDistrito] = useState('');
+  const [selectedLocal, setSelectedLocal] = useState('');
+  const [selectedEstado, setSelectedEstado] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalMesas, setTotalMesas] = useState(0);
 
   // Modal Detalle
   const [selectedResultado, setSelectedResultado] = useState(null);
@@ -22,31 +31,46 @@ const ResultadosAdminPage = () => {
   const [loadingDetalle, setLoadingDetalle] = useState(false);
 
   useEffect(() => {
-    fetchResumen();
+    fetchInitialData();
   }, []);
 
   useEffect(() => {
     fetchResultados();
-  }, [searchTerm, selectedEstado]);
+  }, [searchTerm, selectedDistrito, selectedLocal, selectedEstado, page]);
 
-  const fetchResumen = async () => {
+  const fetchInitialData = async () => {
     try {
-      const res = await get('/dashboard/resumen');
-      setResumen(res.data?.data || res.data || null);
+      const [resumenRes, distRes, locRes] = await Promise.all([
+        get('/dashboard/resumen'),
+        get('/distritos'),
+        get('/locales')
+      ]);
+      setResumen(resumenRes.data?.data || resumenRes.data || null);
+      setDistritos(distRes.data?.data || distRes.data || []);
+      setLocales(locRes.data?.data || locRes.data || []);
     } catch (error) {
-      console.error('Error cargando resumen:', error);
+      console.error('Error cargando datos iniciales:', error);
     }
   };
 
   const fetchResultados = async () => {
     setLoading(true);
     try {
-      let url = '/mesas?limit=100';
+      let url = `/mesas?page=${page}&limit=25`;
       if (searchTerm) url += `&q=${encodeURIComponent(searchTerm)}`;
+      if (selectedDistrito) url += `&distrito_id=${selectedDistrito}`;
+      if (selectedLocal) url += `&local_id=${selectedLocal}`;
       if (selectedEstado) url += `&estado=${selectedEstado}`;
 
       const res = await get(url);
-      setMesas(res.data?.data || res.data || []);
+      const data = res.data?.data || res.data || [];
+      const meta = res.data?.meta || {};
+      
+      setMesas(data);
+      if (meta.total !== undefined) {
+        setTotalMesas(meta.total);
+        setTotalPages(Math.ceil(meta.total / 25));
+      }
     } catch (error) {
       console.error('Error cargando resultados de mesas:', error);
       toast.error('Error al cargar mesas');
@@ -55,18 +79,36 @@ const ResultadosAdminPage = () => {
     }
   };
 
+  // Filter locales by selected district in the filter bar
+  const filteredLocalesForFilter = useMemo(() => {
+    if (!selectedDistrito) return locales;
+    return locales.filter(l => String(l.distrito_id) === String(selectedDistrito));
+  }, [locales, selectedDistrito]);
+
+  const handleDistritoChange = (e) => {
+    setSelectedDistrito(e.target.value);
+    setSelectedLocal('');
+    setPage(1);
+  };
+
+  const handleResetFilters = () => {
+    setSearchTerm('');
+    setSelectedDistrito('');
+    setSelectedLocal('');
+    setSelectedEstado('');
+    setPage(1);
+  };
+
   const handleVerDetalle = async (mesa) => {
     setLoadingDetalle(true);
     setModalDetalleOpen(true);
     setSelectedResultado(null);
 
     try {
-      // First get mesa details which includes the latest resultado
       const mesaRes = await get(`/mesas/${mesa.id}`);
       const mesaData = mesaRes.data?.data || mesaRes.data;
 
       if (mesaData?.resultado?.id) {
-        // Fetch complete resultado detail including votes breakdown and signed photo URL
         const detalleRes = await get(`/resultados/${mesaData.resultado.id}`);
         setSelectedResultado({
           ...mesaData,
@@ -86,6 +128,8 @@ const ResultadosAdminPage = () => {
     }
   };
 
+  const hasActiveFilters = searchTerm || selectedDistrito || selectedLocal || selectedEstado;
+
   const estadoOptions = [
     { label: 'Todos los estados', value: '' },
     { label: 'Verificada', value: 'verificada' },
@@ -100,7 +144,7 @@ const ResultadosAdminPage = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center">
             <BarChart3 className="mr-2 text-red-600" size={28} />
-            Control de Resultados y Actas
+            Control de Resultados y Actas Electorales
           </h1>
           <p className="text-sm text-gray-500">Auditoría, visualización de actas físicas y escrutinio por mesa</p>
         </div>
@@ -129,26 +173,83 @@ const ResultadosAdminPage = () => {
       )}
 
       <Card>
-        <div className="flex flex-col sm:flex-row gap-4 mb-6">
-          <div className="flex-1">
-            <SearchInput
-              onSearch={setSearchTerm}
-              placeholder="Buscar por número de mesa..."
-            />
+        {/* Panel de Búsqueda Avanzada */}
+        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-700 flex items-center">
+              <Filter size={14} className="mr-1.5 text-red-600" />
+              Búsqueda Avanzada por Distrito, Local y Mesa
+            </span>
+            {hasActiveFilters && (
+              <button
+                onClick={handleResetFilters}
+                className="text-xs text-red-600 hover:text-red-800 font-semibold flex items-center transition-colors"
+              >
+                <X size={13} className="mr-1" />
+                Limpiar Filtros
+              </button>
+            )}
           </div>
-          <div className="w-full sm:w-60">
-            <select
-              value={selectedEstado}
-              onChange={(e) => setSelectedEstado(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
-            >
-              {estadoOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Buscador de texto */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Buscar por N° o Local</label>
+              <SearchInput
+                onSearch={(val) => { setSearchTerm(val); setPage(1); }}
+                placeholder="Ej: 009434 o Mariscal..."
+              />
+            </div>
+
+            {/* Filtro Distrito */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Filtrar por Distrito</label>
+              <select
+                value={selectedDistrito}
+                onChange={handleDistritoChange}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
+              >
+                <option value="">Todos los distritos (16)</option>
+                {distritos.map(d => (
+                  <option key={d.id} value={String(d.id)}>{d.nombre}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro Local */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Local de Votación {selectedDistrito && `(${filteredLocalesForFilter.length})`}
+              </label>
+              <select
+                value={selectedLocal}
+                onChange={(e) => { setSelectedLocal(e.target.value); setPage(1); }}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
+              >
+                <option value="">Todos los locales</option>
+                {filteredLocalesForFilter.map(l => (
+                  <option key={l.id} value={String(l.id)}>{l.nombre}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro Estado */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Estado de Transmisión</label>
+              <select
+                value={selectedEstado}
+                onChange={(e) => { setSelectedEstado(e.target.value); setPage(1); }}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
+              >
+                {estadoOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
+        {/* Tabla de Mesas y Resultados */}
         <Table headers={['N° Mesa', 'Local de Votación', 'Distrito', 'Electores', 'Estado', 'Acta Digital', 'Acciones']}>
           {mesas.map((m) => (
             <tr key={m.id} className="hover:bg-gray-50 transition-colors">
@@ -158,7 +259,7 @@ const ResultadosAdminPage = () => {
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                 {m.local_nombre || 'Local asignado'}
               </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-medium">
                 {m.distrito_nombre || 'Ayacucho'}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
@@ -196,6 +297,31 @@ const ResultadosAdminPage = () => {
             </tr>
           )}
         </Table>
+
+        {/* Paginación */}
+        {totalPages > 1 && (
+          <div className="mt-4 flex flex-col sm:flex-row items-center justify-between border-t border-gray-200 pt-4 gap-3">
+            <span className="text-sm text-gray-600">
+              Mostrando página <span className="font-bold text-gray-900">{page}</span> de <span className="font-bold text-gray-900">{totalPages}</span> ({totalMesas} mesas totales)
+            </span>
+            <div className="flex gap-2">
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage(page - 1)}
+                className="px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-40 hover:bg-gray-50 font-medium transition-colors"
+              >
+                Anterior
+              </button>
+              <button
+                disabled={page >= totalPages}
+                onClick={() => setPage(page + 1)}
+                className="px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-40 hover:bg-gray-50 font-medium transition-colors"
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Modal Detalle de Acta y Votos */}
