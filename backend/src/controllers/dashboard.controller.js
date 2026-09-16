@@ -18,6 +18,57 @@ const num = (v) => Number(v || 0);
 
 export const getResumen = async (req, res) => {
   try {
+    const { distrito_id, local_id } = req.query;
+    if (distrito_id || local_id) {
+      const clave = `dashboard:resumen:${distrito_id || 'all'}:${local_id || 'all'}`;
+      const data = await cacheWrap(clave, TTL, async () => {
+        let mesaQuery = db('mesas_sufragio as m')
+          .join('locales_votacion as l', 'm.local_id', 'l.id');
+
+        if (distrito_id) mesaQuery = mesaQuery.where('l.distrito_id', distrito_id);
+        if (local_id) mesaQuery = mesaQuery.where('m.local_id', local_id);
+
+        const [totalMesas, estadosMesa, totalLocales] = await Promise.all([
+          mesaQuery.clone().count('m.id as c').first(),
+          mesaQuery.clone().select('m.estado').count('m.id as c').groupBy('m.estado'),
+          mesaQuery.clone().countDistinct('m.local_id as c').first(),
+        ]);
+
+        const porEstado = estadosMesa.reduce((acc, row) => {
+          acc[row.estado] = num(row.c);
+          return acc;
+        }, {});
+
+        const total = num(totalMesas?.c);
+        const verificadas = porEstado.verificada || 0;
+        const reportadas = porEstado.reportada || 0;
+
+        let votosQuery = db('resultados_mesa as rm')
+          .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
+          .join('locales_votacion as l', 'm.local_id', 'l.id')
+          .where('rm.estado', 'verificado');
+
+        if (distrito_id) votosQuery = votosQuery.where('l.distrito_id', distrito_id);
+        if (local_id) votosQuery = votosQuery.where('m.local_id', local_id);
+
+        const votos = await votosQuery.sum('rm.total_votos_emitidos as s').first();
+
+        return {
+          total_mesas: total,
+          mesas_pendientes: porEstado.pendiente || 0,
+          mesas_reportadas: reportadas,
+          mesas_verificadas: verificadas,
+          mesas_observadas: porEstado.observada || 0,
+          total_locales: num(totalLocales?.c),
+          porcentaje_avance: total ? Number(((verificadas / total) * 100).toFixed(2)) : 0,
+          porcentaje_procesado: total ? Number((((verificadas + reportadas) / total) * 100).toFixed(2)) : 0,
+          total_votos_contados: num(votos?.s),
+          actualizado_en: new Date().toISOString(),
+        };
+      });
+      return res.json({ success: true, data, message: 'Resumen obtenido' });
+    }
+
     const data = await cacheWrap('dashboard:resumen', TTL, async () => {
       const [
         totalMesas, estadosMesa, totalPersoneros, personerosAsignados,
@@ -65,6 +116,52 @@ export const getResumen = async (req, res) => {
     res.json({ success: true, data, message: 'Resumen obtenido' });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error obteniendo resumen', error: error.message });
+  }
+};
+
+export const getComposicionVoto = async (req, res) => {
+  try {
+    const { distrito_id, local_id } = req.query;
+    const clave = `dashboard:composicion:${distrito_id || 'all'}:${local_id || 'all'}`;
+
+    const data = await cacheWrap(clave, TTL, async () => {
+      let query = db('resultados_mesa as rm')
+        .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
+        .join('locales_votacion as l', 'm.local_id', 'l.id')
+        .where('rm.estado', 'verificado');
+
+      if (distrito_id) query = query.where('l.distrito_id', distrito_id);
+      if (local_id) query = query.where('m.local_id', local_id);
+
+      const fila = await query.select(
+        db.raw('COALESCE(SUM(rm.total_votos_emitidos), 0) as total_emitidos'),
+        db.raw('COALESCE(SUM(rm.votos_blanco), 0) as votos_blanco'),
+        db.raw('COALESCE(SUM(rm.votos_nulo), 0) as votos_nulo'),
+        db.raw('COALESCE(SUM(rm.votos_impugnados), 0) as votos_impugnados')
+      ).first();
+
+      const emitidos = num(fila?.total_emitidos);
+      const blanco = num(fila?.votos_blanco);
+      const nulo = num(fila?.votos_nulo);
+      const impugnados = num(fila?.votos_impugnados);
+      const validos = Math.max(0, emitidos - blanco - nulo - impugnados);
+
+      return {
+        total_emitidos: emitidos,
+        votos_validos: validos,
+        votos_blanco: blanco,
+        votos_nulo: nulo,
+        votos_impugnados: impugnados,
+        porcentaje_validos: emitidos ? Number(((validos / emitidos) * 100).toFixed(2)) : 0,
+        porcentaje_blanco: emitidos ? Number(((blanco / emitidos) * 100).toFixed(2)) : 0,
+        porcentaje_nulo: emitidos ? Number(((nulo / emitidos) * 100).toFixed(2)) : 0,
+        porcentaje_impugnados: emitidos ? Number(((impugnados / emitidos) * 100).toFixed(2)) : 0,
+      };
+    });
+
+    res.json({ success: true, data, message: 'Composición de votos obtenida' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error obteniendo composición de votos', error: error.message });
   }
 };
 
@@ -182,6 +279,24 @@ export const getResultadosPorLocal = async (req, res) => {
         return acc;
       }, {});
 
+      let votosPorLocal = [];
+      try {
+        const resVotos = await db('resultados_mesa as rm')
+          .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
+          .where('rm.estado', 'verificado')
+          .select('m.local_id')
+          .sum('rm.total_votos_emitidos as votos')
+          .groupBy('m.local_id');
+        if (Array.isArray(resVotos)) votosPorLocal = resVotos;
+      } catch {
+        votosPorLocal = [];
+      }
+
+      const mapaVotos = votosPorLocal.reduce((acc, r) => {
+        acc[r.local_id] = num(r.votos);
+        return acc;
+      }, {});
+
       return locales.map((l) => {
         const estados = mapa[l.id] || {};
         const totalMesas = num(l.total_mesas);
@@ -193,6 +308,7 @@ export const getResultadosPorLocal = async (req, res) => {
           mesas_reportadas: estados.reportada || 0,
           mesas_verificadas: verificadas,
           mesas_observadas: estados.observada || 0,
+          votos_contados: mapaVotos[l.id] || 0,
           porcentaje_avance: totalMesas ? Number(((verificadas / totalMesas) * 100).toFixed(2)) : 0,
         };
       });

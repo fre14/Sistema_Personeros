@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { get } from '../../services/api';
 import { useSocket } from '../../contexts/SocketContext';
 import Card from '../../components/ui/Card';
@@ -11,23 +11,57 @@ import toast from 'react-hot-toast';
 import { 
   BarChart3, Eye, FileText, CheckCircle2, AlertTriangle, 
   Image as ImageIcon, Filter, X, RefreshCw, PieChart as PieIcon, 
-  Layers, ExternalLink, Activity
+  Layers, ExternalLink, Activity, Download, MapPin, Building2,
+  ChevronRight, TrendingUp, Vote, Award, ShieldCheck, Check
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, PieChart, Pie, Cell, Legend 
 } from 'recharts';
+import { exportarGraficoComoImagen } from '../../utils/exportImage';
+
+const COLORES_PALETA = [
+  '#dc2626', // Rojo
+  '#2563eb', // Azul
+  '#16a34a', // Verde
+  '#d97706', // Ámbar
+  '#7c3aed', // Púrpura
+  '#0891b2', // Cyan
+  '#ea580c', // Naranja
+  '#e11d48', // Rosa
+  '#0d9488', // Teal
+  '#4f46e5', // Índigo
+  '#64748b', // Pizarra
+];
+
+const COLORES_COMPOSICION = {
+  validos: '#16a34a',
+  blanco: '#d97706',
+  nulo: '#dc2626',
+  impugnados: '#8b5cf6',
+};
 
 const ResultadosAdminPage = () => {
-  const [mesas, setMesas] = useState([]);
-  const [locales, setLocales] = useState([]);
+  // Datos maestros
   const [distritos, setDistritos] = useState([]);
+  const [locales, setLocales] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [resumen, setResumen] = useState(null);
-  const [votosCandidatos, setVotosCandidatos] = useState([]);
   const [vistaModo, setVistaModo] = useState('completo'); // 'completo' | 'graficos' | 'mesas'
 
-  // Advanced Filters
+  // Filtros territoriales exclusivos para las gráficas (Desglose por Distrito y Local)
+  const [filtroDistrito, setFiltroDistrito] = useState('');
+  const [filtroLocal, setFiltroLocal] = useState('');
+
+  // Datos de estadísticas y gráficos
+  const [resumen, setResumen] = useState(null);
+  const [votosCandidatos, setVotosCandidatos] = useState([]);
+  const [composicionVotos, setComposicionVotos] = useState(null);
+  const [distritosStats, setDistritosStats] = useState([]);
+  const [localesStats, setLocalesStats] = useState([]);
+  const [loadingStats, setLoadingStats] = useState(false);
+
+  // Filtros de la tabla de mesas
+  const [mesas, setMesas] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDistrito, setSelectedDistrito] = useState('');
   const [selectedLocal, setSelectedLocal] = useState('');
@@ -36,27 +70,35 @@ const ResultadosAdminPage = () => {
   const [totalPages, setTotalPages] = useState(1);
   const [totalMesas, setTotalMesas] = useState(0);
 
-  // Modal Detalle
+  // Modal Detalle de Mesa y Acta
   const [selectedResultado, setSelectedResultado] = useState(null);
   const [modalDetalleOpen, setModalDetalleOpen] = useState(false);
   const [loadingDetalle, setLoadingDetalle] = useState(false);
+  const [zoomFoto, setZoomFoto] = useState(false);
 
   const { socket } = useSocket();
 
+  // Carga inicial de distritos y locales
   useEffect(() => {
-    fetchInitialData();
+    fetchCatalogos();
   }, []);
 
+  // Carga de estadísticas y gráficos al cambiar filtros territoriales
   useEffect(() => {
-    fetchResultados();
+    fetchEstadisticas();
+  }, [filtroDistrito, filtroLocal]);
+
+  // Carga de la tabla de mesas
+  useEffect(() => {
+    fetchMesas();
   }, [searchTerm, selectedDistrito, selectedLocal, selectedEstado, page]);
 
-  // Real-time synchronization via Socket.IO
+  // Sincronización en tiempo real vía Socket.io
   useEffect(() => {
     if (socket) {
       const handleRealtimeUpdate = () => {
-        fetchInitialData();
-        fetchResultados();
+        fetchEstadisticas();
+        fetchMesas();
       };
 
       socket.on('resultado:nuevo', handleRealtimeUpdate);
@@ -69,35 +111,63 @@ const ResultadosAdminPage = () => {
         socket.off('resultado:observado', handleRealtimeUpdate);
       };
     }
-  }, [socket, page, searchTerm, selectedDistrito, selectedLocal, selectedEstado]);
+  }, [socket, filtroDistrito, filtroLocal, page, searchTerm, selectedDistrito, selectedLocal, selectedEstado]);
 
-  const fetchInitialData = async () => {
+  const fetchCatalogos = async () => {
     try {
-      const [resumenRes, distRes, locRes, candRes] = await Promise.all([
-        get('/dashboard/resumen'),
+      const [distRes, locRes] = await Promise.all([
         get('/distritos'),
-        get('/locales'),
-        get('/dashboard/por-candidato')
+        get('/locales')
       ]);
-      setResumen(resumenRes.data?.data || resumenRes.data || null);
       setDistritos(distRes.data?.data || distRes.data || []);
       setLocales(locRes.data?.data || locRes.data || []);
+    } catch (error) {
+      console.error('Error cargando catálogos:', error);
+    }
+  };
+
+  const fetchEstadisticas = async () => {
+    setLoadingStats(true);
+    try {
+      let queryParams = '';
+      if (filtroDistrito) queryParams += `?distrito_id=${filtroDistrito}`;
+      if (filtroLocal) queryParams += `${queryParams ? '&' : '?'}local_id=${filtroLocal}`;
+
+      const [resumenRes, candRes, compRes, distRes, locRes] = await Promise.all([
+        get(`/dashboard/resumen${queryParams}`),
+        get(`/dashboard/por-candidato${queryParams}`),
+        get(`/dashboard/composicion-voto${queryParams}`),
+        get('/dashboard/por-distrito'),
+        get(`/dashboard/por-local${filtroDistrito ? `?distrito_id=${filtroDistrito}` : ''}`)
+      ]);
+
+      setResumen(resumenRes.data?.data || resumenRes.data || null);
 
       const candData = candRes.data?.data || candRes.data || [];
-      setVotosCandidatos(candData.map(c => ({
+      const listaCandidatos = Array.isArray(candData) ? candData : (candData.candidatos || []);
+      setVotosCandidatos(listaCandidatos.map((c, idx) => ({
+        id: c.id,
         candidato: c.nombre_completo || `Lista ${c.numero_lista}`,
         votos: Number(c.total_votos || 0),
         porcentaje: Number(c.porcentaje || 0),
         organizacion: c.organizacion_politica || '',
         siglas: c.siglas || '',
         numero_lista: c.numero_lista,
+        color: COLORES_PALETA[idx % COLORES_PALETA.length],
       })));
+
+      setComposicionVotos(compRes.data?.data || compRes.data || null);
+      setDistritosStats(distRes.data?.data || distRes.data || []);
+      setLocalesStats(locRes.data?.data || locRes.data || []);
     } catch (error) {
-      console.error('Error cargando datos estadísticos:', error);
+      console.error('Error cargando estadísticas:', error);
+      toast.error('Error al actualizar estadísticas');
+    } finally {
+      setLoadingStats(false);
     }
   };
 
-  const fetchResultados = async () => {
+  const fetchMesas = async () => {
     setLoading(true);
     try {
       let url = `/mesas?page=${page}&limit=25`;
@@ -116,37 +186,60 @@ const ResultadosAdminPage = () => {
         setTotalPages(Math.ceil(meta.total / 25));
       }
     } catch (error) {
-      console.error('Error cargando resultados de mesas:', error);
+      console.error('Error cargando mesas:', error);
       toast.error('Error al cargar mesas');
     } finally {
       setLoading(false);
     }
   };
 
-  // Filter locales by selected district in the filter bar
-  const filteredLocalesForFilter = useMemo(() => {
+  // Locales disponibles para el selector de filtro de gráficas
+  const localesParaFiltroGrafico = useMemo(() => {
+    if (!filtroDistrito) return locales;
+    return locales.filter(l => String(l.distrito_id) === String(filtroDistrito));
+  }, [locales, filtroDistrito]);
+
+  // Locales para el filtro de la tabla
+  const localesParaFiltroTabla = useMemo(() => {
     if (!selectedDistrito) return locales;
     return locales.filter(l => String(l.distrito_id) === String(selectedDistrito));
   }, [locales, selectedDistrito]);
 
-  const handleDistritoChange = (e) => {
-    setSelectedDistrito(e.target.value);
-    setSelectedLocal('');
-    setPage(1);
+  // Nombre del ámbito actual seleccionado para los reportes
+  const nombreAmbitoActual = useMemo(() => {
+    if (filtroLocal) {
+      const loc = locales.find(l => String(l.id) === String(filtroLocal));
+      return `Local: ${loc ? loc.nombre : filtroLocal}`;
+    }
+    if (filtroDistrito) {
+      const dist = distritos.find(d => String(d.id) === String(filtroDistrito));
+      return `Distrito: ${dist ? dist.nombre : filtroDistrito}`;
+    }
+    return 'Total Provincial (Huamanga)';
+  }, [filtroDistrito, filtroLocal, distritos, locales]);
+
+  const handleCambioDistritoGrafico = (e) => {
+    setFiltroDistrito(e.target.value);
+    setFiltroLocal('');
   };
 
-  const handleResetFilters = () => {
-    setSearchTerm('');
-    setSelectedDistrito('');
-    setSelectedLocal('');
-    setSelectedEstado('');
+  const handleResetFiltroGraficos = () => {
+    setFiltroDistrito('');
+    setFiltroLocal('');
+  };
+
+  const handleSincronizarFiltrosATabla = () => {
+    setSelectedDistrito(filtroDistrito);
+    setSelectedLocal(filtroLocal);
     setPage(1);
+    toast.success('Filtros sincronizados con la tabla de mesas');
   };
 
   const handleVerDetalle = async (mesa) => {
     setLoadingDetalle(true);
     setModalDetalleOpen(true);
     setSelectedResultado(null);
+    setZoomFoto(false);
 
     try {
       const mesaRes = await get(`/mesas/${mesa.id}`);
@@ -172,18 +265,55 @@ const ResultadosAdminPage = () => {
     }
   };
 
-  const hasActiveFilters = searchTerm || selectedDistrito || selectedLocal || selectedEstado;
-
-  const pieData = [
+  // Datos para el gráfico de torta de estado de mesas
+  const pieDataMesas = useMemo(() => [
     { name: 'Verificadas', value: Number(resumen?.mesas_verificadas || 0), color: '#16a34a' },
     { name: 'Reportadas', value: Number(resumen?.mesas_reportadas || 0), color: '#d97706' },
     { name: 'Observadas', value: Number(resumen?.mesas_observadas || 0), color: '#dc2626' },
     { name: 'Pendientes', value: Number(resumen?.mesas_pendientes || 0), color: '#9ca3af' },
-  ];
+  ], [resumen]);
+
+  // Datos para el gráfico de composición de votos (válidos, blancos, nulos, impugnados)
+  const pieDataComposicion = useMemo(() => {
+    if (!composicionVotos) return [];
+    return [
+      { name: 'Votos Válidos', value: Number(composicionVotos.votos_validos || 0), color: COLORES_COMPOSICION.validos },
+      { name: 'Votos en Blanco', value: Number(composicionVotos.votos_blanco || 0), color: COLORES_COMPOSICION.blanco },
+      { name: 'Votos Nulos', value: Number(composicionVotos.votos_nulo || 0), color: COLORES_COMPOSICION.nulo },
+      { name: 'Votos Impugnados', value: Number(composicionVotos.votos_impugnados || 0), color: COLORES_COMPOSICION.impugnados },
+    ].filter(item => item.value > 0);
+  }, [composicionVotos]);
+
+  // Datos para el gráfico de desglose territorial:
+  // Si no hay distrito seleccionado: Desglose por Distrito
+  // Si hay distrito seleccionado: Desglose por Locales de ese distrito
+  const datosDesgloseTerritorial = useMemo(() => {
+    if (filtroDistrito) {
+      return localesStats.map(l => ({
+        id: l.id,
+        nombre: l.nombre.length > 22 ? `${l.nombre.slice(0, 20)}...` : l.nombre,
+        nombreCompleto: l.nombre,
+        votos: Number(l.votos_contados || 0),
+        totalMesas: Number(l.total_mesas || 0),
+        mesasVerificadas: Number(l.mesas_verificadas || 0),
+        avance: Number(l.porcentaje_avance || 0),
+      })).sort((a, b) => b.votos - a.votos);
+    } else {
+      return distritosStats.map(d => ({
+        id: d.id,
+        nombre: d.nombre,
+        nombreCompleto: d.nombre,
+        votos: Number(d.votos_contados || 0),
+        totalMesas: Number(d.total_mesas || 0),
+        mesasVerificadas: Number(d.mesas_verificadas || 0),
+        avance: Number(d.porcentaje_avance || 0),
+      })).sort((a, b) => b.votos - a.votos);
+    }
+  }, [filtroDistrito, distritosStats, localesStats]);
 
   const avance = Number(resumen?.porcentaje_avance || 0);
 
-  // Modal Photo URL normalizer
+  // Normalización de foto para el modal
   const modalPhotoRaw = selectedResultado?.resultadoDetalle?.foto_acta_url_presigned || selectedResultado?.resultadoDetalle?.foto_acta_url;
   const modalPhotoUrl = modalPhotoRaw 
     ? (modalPhotoRaw.startsWith('http') || modalPhotoRaw.startsWith('/') ? modalPhotoRaw : `/${modalPhotoRaw}`)
@@ -191,193 +321,536 @@ const ResultadosAdminPage = () => {
 
   return (
     <div className="space-y-6 pb-12">
-      {/* Header con indicador de tiempo real */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      {/* ========================================================= */}
+      {/* 1. ENCABEZADO OFICIAL CON CONTROLES Y EN VIVO             */}
+      {/* ========================================================= */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-black text-gray-900 flex items-center">
-              <BarChart3 className="mr-2 text-red-600" size={28} />
+              <BarChart3 className="mr-2.5 text-red-600" size={30} />
               Centro de Cómputo y Resultados Oficiales
             </h1>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 animate-pulse">
+            <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 animate-pulse border border-emerald-200">
               <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
               En Vivo
             </span>
           </div>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-1">
+            <MapPin size={14} className="text-red-500" />
             Provincia de Huamanga • Monitoreo estadístico y transmisión en tiempo real
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
           {/* Selector de Vistas */}
-          <div className="bg-gray-100 p-1 rounded-lg flex text-xs font-bold">
+          <div className="bg-gray-100 p-1 rounded-xl flex text-xs font-bold border border-gray-200">
             <button
               onClick={() => setVistaModo('completo')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${vistaModo === 'completo' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+              className={`px-3 py-1.5 rounded-lg transition-all ${vistaModo === 'completo' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Vista Completa
             </button>
             <button
               onClick={() => setVistaModo('graficos')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${vistaModo === 'graficos' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+              className={`px-3 py-1.5 rounded-lg transition-all ${vistaModo === 'graficos' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Solo Gráficos
             </button>
             <button
               onClick={() => setVistaModo('mesas')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${vistaModo === 'mesas' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+              className={`px-3 py-1.5 rounded-lg transition-all ${vistaModo === 'mesas' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Solo Mesas
             </button>
           </div>
 
           <Button 
-            onClick={() => { fetchInitialData(); fetchResultados(); }} 
-            isLoading={loading} 
+            onClick={() => { fetchEstadisticas(); fetchMesas(); }} 
+            isLoading={loadingStats || loading} 
             variant="secondary" 
-            className="flex items-center"
+            className="flex items-center text-xs font-bold"
           >
-            <RefreshCw size={15} className="mr-1" />
+            <RefreshCw size={14} className="mr-1.5" />
             Actualizar
           </Button>
+
+          {(vistaModo === 'completo' || vistaModo === 'graficos') && (
+            <Button
+              variant="primary"
+              onClick={() => exportarGraficoComoImagen('reporte-graficos-completo', `reporte-electoral-${filtroDistrito ? 'distrito' : 'provincial'}`)}
+              className="flex items-center text-xs font-bold bg-red-700 hover:bg-red-800 text-white shadow-sm"
+            >
+              <Download size={14} className="mr-1.5" />
+              Descargar Reporte Completo (PNG)
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Barra de Progreso de Escrutinio Oficial */}
-      {resumen && (
-        <Card className="border-l-4 border-l-red-600 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
-            <div>
-              <span className="text-sm font-extrabold text-gray-800">
-                Avance Oficial de Cómputo Electoral
-              </span>
-              <span className="text-xs text-gray-500 ml-2">
-                (Mesas verificadas y aprobadas por coordinadores)
-              </span>
-            </div>
-            <span className="text-xl font-black text-red-700">{avance.toFixed(2)}%</span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-3.5 overflow-hidden">
-            <div 
-              className="bg-red-600 h-3.5 rounded-full transition-all duration-700 ease-out shadow" 
-              style={{ width: `${Math.min(100, Math.max(0, avance))}%` }}
-            ></div>
-          </div>
-          <div className="mt-2 flex flex-wrap justify-between text-xs text-gray-600">
-            <span><strong>{resumen.mesas_verificadas || 0}</strong> de <strong>{resumen.total_mesas || 0}</strong> mesas oficiales</span>
-            <span>Total Votos Computados: <strong className="text-red-700 font-extrabold font-mono">{resumen.total_votos_verificados || 0}</strong> votos</span>
-          </div>
-        </Card>
-      )}
-
-      {/* Tarjetas de Métricas Rápidas */}
-      {resumen && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-emerald-200 bg-gradient-to-br from-emerald-50/50 to-white">
-            <p className="text-xs font-bold text-emerald-800 uppercase flex items-center justify-between">
-              Mesas Verificadas
-              <CheckCircle2 size={16} className="text-emerald-600" />
-            </p>
-            <p className="text-3xl font-black text-emerald-700 mt-1">{resumen.mesas_verificadas || 0}</p>
-            <p className="text-[11px] text-emerald-600 font-medium mt-0.5">Actas aprobadas y computadas</p>
-          </div>
-
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-amber-200 bg-gradient-to-br from-amber-50/50 to-white">
-            <p className="text-xs font-bold text-amber-800 uppercase flex items-center justify-between">
-              Mesas Reportadas
-              <Activity size={16} className="text-amber-600" />
-            </p>
-            <p className="text-3xl font-black text-amber-600 mt-1">{resumen.mesas_reportadas || 0}</p>
-            <p className="text-[11px] text-amber-700 font-medium mt-0.5">En revisión por coordinadores</p>
-          </div>
-
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-red-200 bg-gradient-to-br from-red-50/50 to-white">
-            <p className="text-xs font-bold text-red-800 uppercase flex items-center justify-between">
-              Mesas Observadas
-              <AlertTriangle size={16} className="text-red-600" />
-            </p>
-            <p className="text-3xl font-black text-red-600 mt-1">{resumen.mesas_observadas || 0}</p>
-            <p className="text-[11px] text-red-700 font-medium mt-0.5">Declinadas en espera de corrección</p>
-          </div>
-
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-            <p className="text-xs font-bold text-gray-500 uppercase flex items-center justify-between">
-              Mesas Pendientes
-              <span className="text-xs font-normal text-gray-400">Sin acta</span>
-            </p>
-            <p className="text-3xl font-black text-gray-600 mt-1">{resumen.mesas_pendientes || 0}</p>
-            <p className="text-[11px] text-gray-500 font-medium mt-0.5">Por transmitir por personeros</p>
-          </div>
-        </div>
-      )}
-
-      {/* SECCIÓN DE GRÁFICOS ESTADÍSTICOS EN TIEMPO REAL */}
+      {/* ========================================================= */}
+      {/* 2. SECCIÓN DE ESTADÍSTICAS Y MÚLTIPLES GRÁFICAS          */}
+      {/* ========================================================= */}
       {(vistaModo === 'completo' || vistaModo === 'graficos') && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Gráfico de Barras: Votación por Candidato */}
-            <Card className="lg:col-span-2" title="📊 Votación Consolidada por Candidato / Organización (Tiempo Real)">
-              <div className="h-80">
-                {votosCandidatos.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={votosCandidatos} margin={{ top: 20, right: 30, left: 10, bottom: 40 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis 
-                        dataKey="candidato" 
-                        angle={-20} 
-                        textAnchor="end" 
-                        height={60} 
-                        tick={{ fontSize: 11, fontWeight: 'bold' }} 
-                      />
-                      <YAxis />
-                      <Tooltip 
-                        formatter={(val, name, props) => [`${val} votos (${props.payload.porcentaje}%)`, props.payload.organizacion]} 
-                      />
-                      <Bar dataKey="votos" fill="#dc2626" radius={[6, 6, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                    <BarChart3 size={40} className="mb-2 text-gray-300" />
-                    <p className="text-sm font-semibold">Esperando actas verificadas para consolidar el cómputo</p>
-                  </div>
-                )}
+        <div id="reporte-graficos-completo" className="space-y-6 bg-slate-50/50 p-2 sm:p-4 rounded-2xl border border-gray-200">
+          
+          {/* Membrete oficial visible en la descarga del reporte */}
+          <div className="bg-white p-4 rounded-xl border border-red-100 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-600 text-white flex items-center justify-center font-black text-lg shadow">
+                PE
               </div>
-            </Card>
-
-            {/* Gráfico Circular: Avance y Estado de Mesas */}
-            <Card title="🎯 Estado Provincial de Mesas">
-              <div className="h-80 flex flex-col items-center justify-center">
-                <ResponsiveContainer width="100%" height="80%">
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={85}
-                      paddingAngle={4}
-                      dataKey="value"
-                    >
-                      {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(val, name) => [`${val} mesas`, name]} />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="text-center text-xs text-gray-500 font-semibold">
-                  Total: {resumen?.total_mesas || 0} mesas en padrón
+              <div>
+                <h2 className="text-base font-extrabold text-gray-900 tracking-tight">
+                  TABLERO OFICIAL DE RESULTADOS ELECTORALES
+                </h2>
+                <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 mt-0.5">
+                  <span className="inline-flex items-center gap-1 text-red-700 bg-red-50 px-2 py-0.5 rounded-md border border-red-200">
+                    <MapPin size={12} />
+                    {nombreAmbitoActual}
+                  </span>
+                  <span>• Actualizado: {new Date().toLocaleTimeString()}</span>
                 </div>
               </div>
-            </Card>
+            </div>
+
+            {/* Filtros Geográficos de Desglose para las Gráficas (Marcados con 'no-export') */}
+            <div className="no-export flex flex-wrap items-center gap-2 w-full sm:w-auto bg-gray-50 p-2 rounded-xl border border-gray-200">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-gray-700 mr-1">
+                <Filter size={14} className="text-red-600" />
+                <span>Desglosar por:</span>
+              </div>
+
+              {/* Selector de Distrito */}
+              <select
+                value={filtroDistrito}
+                onChange={handleCambioDistritoGrafico}
+                className="text-xs font-medium border border-gray-300 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 focus:ring-2 focus:ring-red-500 focus:outline-none"
+              >
+                <option value="">Todos los Distritos (Total Huamanga)</option>
+                {distritos.map(d => (
+                  <option key={d.id} value={d.id}>{d.nombre}</option>
+                ))}
+              </select>
+
+              {/* Selector de Local */}
+              <select
+                value={filtroLocal}
+                onChange={(e) => setFiltroLocal(e.target.value)}
+                disabled={!filtroDistrito && localesParaFiltroGrafico.length === 0}
+                className={`text-xs font-medium border border-gray-300 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 focus:ring-2 focus:ring-red-500 focus:outline-none ${!filtroDistrito ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                <option value="">{filtroDistrito ? 'Todos los Locales del Distrito' : 'Primero seleccione distrito'}</option>
+                {localesParaFiltroGrafico.map(l => (
+                  <option key={l.id} value={l.id}>{l.nombre}</option>
+                ))}
+              </select>
+
+              {(filtroDistrito || filtroLocal) && (
+                <button
+                  onClick={handleResetFiltroGraficos}
+                  title="Restablecer a Total Provincial"
+                  className="p-1.5 text-gray-500 hover:text-red-700 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-gray-200"
+                >
+                  <X size={15} />
+                </button>
+              )}
+
+              {vistaModo === 'completo' && (filtroDistrito || filtroLocal) && (
+                <button
+                  onClick={handleSincronizarFiltrosATabla}
+                  title="Aplicar estos filtros a la tabla de mesas abajo"
+                  className="px-2 py-1 text-[11px] font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors border border-red-200 flex items-center gap-1"
+                >
+                  <Check size={12} />
+                  Sincronizar Tabla
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Tabla de Resumen de Candidatos */}
+          {/* Barra de Progreso de Escrutinio */}
+          {resumen && (
+            <Card className="border-l-4 border-l-red-600 shadow-sm bg-white">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                <div>
+                  <span className="text-sm font-black text-gray-800 flex items-center gap-1.5">
+                    <TrendingUp size={16} className="text-red-600" />
+                    Avance Oficial de Cómputo Electoral ({nombreAmbitoActual})
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    Mesas verificadas y aprobadas por coordinadores de local
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl font-black text-red-700 font-mono">{avance.toFixed(2)}%</span>
+                </div>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-3.5 overflow-hidden">
+                <div 
+                  className="bg-red-600 h-3.5 rounded-full transition-all duration-700 ease-out shadow" 
+                  style={{ width: `${Math.min(100, Math.max(0, avance))}%` }}
+                ></div>
+              </div>
+              <div className="mt-2 flex flex-wrap justify-between text-xs text-gray-600">
+                <span>
+                  <strong>{resumen.mesas_verificadas || 0}</strong> de <strong>{resumen.total_mesas || 0}</strong> mesas oficiales escrutadas
+                </span>
+                <span>
+                  Total Votos Computados: <strong className="text-red-700 font-extrabold font-mono text-sm">{resumen.total_votos_contados || 0}</strong> votos
+                </span>
+              </div>
+            </Card>
+          )}
+
+          {/* Tarjetas de Métricas Rápidas */}
+          {resumen && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-emerald-200 bg-gradient-to-br from-emerald-50/40 to-white">
+                <p className="text-xs font-bold text-emerald-800 uppercase flex items-center justify-between">
+                  Mesas Verificadas
+                  <CheckCircle2 size={16} className="text-emerald-600" />
+                </p>
+                <p className="text-3xl font-black text-emerald-700 mt-1 font-mono">{resumen.mesas_verificadas || 0}</p>
+                <p className="text-[11px] text-emerald-600 font-medium mt-0.5">Actas aprobadas y computadas</p>
+              </div>
+
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-amber-200 bg-gradient-to-br from-amber-50/40 to-white">
+                <p className="text-xs font-bold text-amber-800 uppercase flex items-center justify-between">
+                  Mesas Reportadas
+                  <Activity size={16} className="text-amber-600" />
+                </p>
+                <p className="text-3xl font-black text-amber-600 mt-1 font-mono">{resumen.mesas_reportadas || 0}</p>
+                <p className="text-[11px] text-amber-700 font-medium mt-0.5">En revisión por coordinadores</p>
+              </div>
+
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-red-200 bg-gradient-to-br from-red-50/40 to-white">
+                <p className="text-xs font-bold text-red-800 uppercase flex items-center justify-between">
+                  Mesas Observadas
+                  <AlertTriangle size={16} className="text-red-600" />
+                </p>
+                <p className="text-3xl font-black text-red-600 mt-1 font-mono">{resumen.mesas_observadas || 0}</p>
+                <p className="text-[11px] text-red-700 font-medium mt-0.5">Declinadas para subsanación</p>
+              </div>
+
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                <p className="text-xs font-bold text-gray-500 uppercase flex items-center justify-between">
+                  Mesas Pendientes
+                  <span className="text-[11px] font-normal text-gray-400">Sin acta</span>
+                </p>
+                <p className="text-3xl font-black text-gray-600 mt-1 font-mono">{resumen.mesas_pendientes || 0}</p>
+                <p className="text-[11px] text-gray-500 font-medium mt-0.5">Por transmitir por personeros</p>
+              </div>
+            </div>
+          )}
+
+          {/* ===================================================== */}
+          {/* BLOQUE DE GRÁFICAS 1 & 2: VOTOS Y DESGLOSE TERRITORIAL*/}
+          {/* ===================================================== */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            {/* Gráfico 1: Votación por Candidato y Organización Política */}
+            <div id="grafico-candidatos" className="lg:col-span-7 bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                      <Award size={18} className="text-red-600" />
+                      Votación Consolidada por Candidato
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {nombreAmbitoActual} • Votos válidos escrutados
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => exportarGraficoComoImagen('grafico-candidatos', `votacion-candidatos-${filtroDistrito || 'total'}`)}
+                    className="no-export p-1.5 text-gray-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-gray-200"
+                    title="Descargar imagen PNG de este gráfico"
+                  >
+                    <Download size={15} />
+                  </button>
+                </div>
+
+                <div className="h-80">
+                  {votosCandidatos.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart 
+                        data={votosCandidatos} 
+                        margin={{ top: 20, right: 20, left: 10, bottom: 55 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey="candidato" 
+                          angle={-25} 
+                          textAnchor="end" 
+                          height={65} 
+                          tick={{ fontSize: 11, fontWeight: 'bold' }} 
+                        />
+                        <YAxis />
+                        <Tooltip 
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-gray-900 text-white p-3 rounded-xl shadow-xl text-xs space-y-1 border border-gray-700">
+                                  <p className="font-bold text-red-400">{data.candidato}</p>
+                                  <p className="text-gray-300">{data.organizacion} ({data.siglas})</p>
+                                  <p className="text-white font-mono font-bold text-sm">
+                                    {data.votos} votos ({data.porcentaje}%)
+                                  </p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Bar 
+                          dataKey="votos" 
+                          radius={[6, 6, 0, 0]} 
+                        >
+                          {votosCandidatos.map((entry, index) => (
+                            <Cell 
+                              key={`cell-${index}`} 
+                              fill={index === 0 ? '#dc2626' : entry.color} 
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                      <BarChart3 size={40} className="mb-2 text-gray-300" />
+                      <p className="text-sm font-semibold">Esperando actas verificadas para consolidar el cómputo</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {votosCandidatos.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
+                  <span>Primer Lugar: <strong className="text-red-700">{votosCandidatos[0]?.candidato}</strong></span>
+                  <span>Total Votos Válidos: <strong className="font-mono text-gray-900">{votosCandidatos.reduce((acc, c) => acc + c.votos, 0)}</strong></span>
+                </div>
+              )}
+            </div>
+
+            {/* Gráfico 2: Desglose Territorial (Por Distritos o Por Locales del Distrito) */}
+            <div id="grafico-desglose-territorial" className="lg:col-span-5 bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                      <Building2 size={18} className="text-red-600" />
+                      {filtroDistrito ? 'Desglose por Locales del Distrito' : 'Desglose Comparativo por Distrito'}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {filtroDistrito ? 'Locales de votación y votos contados' : 'Votos computados por distrito en Huamanga'}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => exportarGraficoComoImagen('grafico-desglose-territorial', `desglose-${filtroDistrito ? 'locales' : 'distritos'}`)}
+                    className="no-export p-1.5 text-gray-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-gray-200"
+                    title="Descargar imagen PNG de este gráfico"
+                  >
+                    <Download size={15} />
+                  </button>
+                </div>
+
+                <div className="h-80">
+                  {datosDesgloseTerritorial.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart 
+                        data={datosDesgloseTerritorial.slice(0, 10)} 
+                        layout="vertical"
+                        margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                        <XAxis type="number" />
+                        <YAxis 
+                          type="category" 
+                          dataKey="nombre" 
+                          width={110} 
+                          tick={{ fontSize: 10, fontWeight: 'bold' }} 
+                        />
+                        <Tooltip 
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-gray-900 text-white p-3 rounded-xl shadow-xl text-xs space-y-1 border border-gray-700">
+                                  <p className="font-bold text-red-400">{data.nombreCompleto}</p>
+                                  <p className="text-gray-300">Votos Computados: <strong>{data.votos}</strong></p>
+                                  <p className="text-gray-300">Avance de Mesas: {data.mesasVerificadas} de {data.totalMesas} ({data.avance}%)</p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Bar 
+                          dataKey="votos" 
+                          fill="#4f46e5" 
+                          radius={[0, 6, 6, 0]} 
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                      <Building2 size={40} className="mb-2 text-gray-300" />
+                      <p className="text-sm font-semibold">Sin datos para el ámbito seleccionado</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
+                <span>{filtroDistrito ? 'Locales en este distrito' : 'Distritos de Huamanga'}: <strong>{datosDesgloseTerritorial.length}</strong></span>
+                <span className="text-[11px] text-gray-400">Top 10 mostrados</span>
+              </div>
+            </div>
+
+          </div>
+
+          {/* ===================================================== */}
+          {/* BLOQUE DE GRÁFICAS 3 & 4: DONAS DE ESTADO Y SUFRAGIO  */}
+          {/* ===================================================== */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            {/* Gráfico 3: Estado de Mesas de Sufragio */}
+            <div id="grafico-estado-mesas" className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                      <PieIcon size={18} className="text-red-600" />
+                      Estado de Mesas de Sufragio
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {nombreAmbitoActual} • Distribución de transmisión
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => exportarGraficoComoImagen('grafico-estado-mesas', `estado-mesas-${filtroDistrito || 'total'}`)}
+                    className="no-export p-1.5 text-gray-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-gray-200"
+                    title="Descargar imagen PNG de este gráfico"
+                  >
+                    <Download size={15} />
+                  </button>
+                </div>
+
+                <div className="h-64 flex items-center justify-center">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={pieDataMesas}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={85}
+                        paddingAngle={4}
+                        dataKey="value"
+                      >
+                        {pieDataMesas.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(val, name) => [`${val} mesas`, name]} />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="mt-2 text-center text-xs text-gray-500 font-semibold border-t border-gray-100 pt-2">
+                Total: {resumen?.total_mesas || 0} mesas en este ámbito
+              </div>
+            </div>
+
+            {/* Gráfico 4: Composición Total del Sufragio (Válidos, Blancos, Nulos, Impugnados) */}
+            <div id="grafico-composicion-votos" className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                      <Vote size={18} className="text-red-600" />
+                      Composición del Sufragio (Votos Totales)
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {nombreAmbitoActual} • Votos válidos vs especiales
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => exportarGraficoComoImagen('grafico-composicion-votos', `composicion-votos-${filtroDistrito || 'total'}`)}
+                    className="no-export p-1.5 text-gray-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-gray-200"
+                    title="Descargar imagen PNG de este gráfico"
+                  >
+                    <Download size={15} />
+                  </button>
+                </div>
+
+                <div className="h-64 flex items-center justify-center">
+                  {pieDataComposicion.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={pieDataComposicion}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={85}
+                          paddingAngle={4}
+                          dataKey="value"
+                        >
+                          {pieDataComposicion.map((entry, index) => (
+                            <Cell key={`comp-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(val, name) => [`${val} votos`, name]} />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-gray-400">
+                      <Vote size={35} className="mb-2 text-gray-300" />
+                      <p className="text-xs font-semibold">Sin votos emitidos en actas verificadas</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {composicionVotos && (
+                <div className="mt-2 grid grid-cols-4 gap-2 text-center text-xs border-t border-gray-100 pt-2">
+                  <div>
+                    <span className="text-[10px] text-gray-500 block">Válidos</span>
+                    <strong className="text-emerald-700 font-mono">{composicionVotos.votos_validos || 0}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-gray-500 block">Blancos</span>
+                    <strong className="text-amber-700 font-mono">{composicionVotos.votos_blanco || 0}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-gray-500 block">Nulos</span>
+                    <strong className="text-red-700 font-mono">{composicionVotos.votos_nulo || 0}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-gray-500 block">Impugnados</span>
+                    <strong className="text-purple-700 font-mono">{composicionVotos.votos_impugnados || 0}</strong>
+                  </div>
+                </div>
+              )}
+            </div>
+
+          </div>
+
+          {/* ===================================================== */}
+          {/* TABLA DE RESULTADOS OFICIALES POR CANDIDATO           */}
+          {/* ===================================================== */}
           {votosCandidatos.length > 0 && (
-            <Card title="📋 Tabla de Resultados Consolidados Oficiales">
+            <Card title={`📋 Tabla Consolidada de Resultados (${nombreAmbitoActual})`}>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
                   <thead className="bg-gray-50 text-xs font-bold text-gray-600 uppercase">
@@ -387,22 +860,35 @@ const ResultadosAdminPage = () => {
                       <th className="px-4 py-3 text-left">Organización Política</th>
                       <th className="px-4 py-3 text-center">Siglas</th>
                       <th className="px-4 py-3 text-right">Votos Verificados</th>
-                      <th className="px-4 py-3 text-right">Porcentaje</th>
+                      <th className="px-4 py-3 text-right">% Votos Válidos</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white">
                     {votosCandidatos.map((c, idx) => (
                       <tr key={idx} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 font-extrabold text-red-700">
-                          <span className="w-6 h-6 rounded-full bg-red-100 text-red-800 inline-flex items-center justify-center text-xs">
+                          <span className="w-6 h-6 rounded-full bg-red-100 text-red-800 inline-flex items-center justify-center text-xs font-mono">
                             {c.numero_lista || idx + 1}
                           </span>
                         </td>
-                        <td className="px-4 py-3 font-bold text-gray-900">{c.candidato}</td>
-                        <td className="px-4 py-3 text-gray-700">{c.organizacion}</td>
-                        <td className="px-4 py-3 text-center font-mono font-bold text-gray-600">{c.siglas}</td>
-                        <td className="px-4 py-3 text-right font-black text-gray-900 text-base">{c.votos.toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right font-extrabold text-red-600">
+                        <td className="px-4 py-3 font-bold text-gray-900 flex items-center gap-2">
+                          {idx === 0 && (
+                            <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-extrabold border border-amber-300">
+                              1° Lugar
+                            </span>
+                          )}
+                          {c.candidato}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">{c.organizacion}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span className="px-2 py-0.5 rounded bg-gray-100 font-mono font-bold text-xs">
+                            {c.siglas}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right font-black font-mono text-gray-900">
+                          {c.votos.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right font-black font-mono text-red-700">
                           {c.porcentaje.toFixed(2)}%
                         </td>
                       </tr>
@@ -412,292 +898,363 @@ const ResultadosAdminPage = () => {
               </div>
             </Card>
           )}
+
+          {/* ===================================================== */}
+          {/* TABLA DE DESGLOSE TERRITORIAL (DRILL-DOWN)            */}
+          {/* ===================================================== */}
+          <Card 
+            title={
+              filtroDistrito 
+                ? `🏢 Desglose por Locales de Votación en este Distrito (${localesStats.length} locales)` 
+                : `📍 Desglose de Avance y Votos por Distritos de Huamanga (${distritosStats.length} distritos)`
+            }
+          >
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50 text-xs font-bold text-gray-600 uppercase">
+                  <tr>
+                    <th className="px-4 py-3 text-left">{filtroDistrito ? 'Local de Votación' : 'Distrito'}</th>
+                    <th className="px-4 py-3 text-center">Total Mesas</th>
+                    <th className="px-4 py-3 text-center">Mesas Verificadas</th>
+                    <th className="px-4 py-3 text-right">Votos Contados</th>
+                    <th className="px-4 py-3 text-right">% Avance</th>
+                    <th className="px-4 py-3 text-center no-export">Acción</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 bg-white">
+                  {filtroDistrito ? (
+                    localesStats.map((l) => (
+                      <tr key={l.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 font-bold text-gray-900">
+                          {l.nombre}
+                          <span className="block text-xs font-normal text-gray-500">{l.direccion}</span>
+                        </td>
+                        <td className="px-4 py-3 text-center font-mono">{l.total_mesas}</td>
+                        <td className="px-4 py-3 text-center font-mono font-bold text-emerald-700">{l.mesas_verificadas}</td>
+                        <td className="px-4 py-3 text-right font-mono font-extrabold text-gray-900">{(l.votos_contados || 0).toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right font-mono font-black text-red-700">{l.porcentaje_avance}%</td>
+                        <td className="px-4 py-3 text-center no-export">
+                          <button
+                            onClick={() => setFiltroLocal(String(l.id))}
+                            className="px-2.5 py-1 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors border border-red-200"
+                          >
+                            Filtrar este Local
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    distritosStats.map((d) => (
+                      <tr key={d.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 font-bold text-gray-900">
+                          {d.nombre}
+                          <span className="block text-xs font-normal text-gray-500">Cód: {d.codigo} • {d.total_locales} locales</span>
+                        </td>
+                        <td className="px-4 py-3 text-center font-mono">{d.total_mesas}</td>
+                        <td className="px-4 py-3 text-center font-mono font-bold text-emerald-700">{d.mesas_verificadas}</td>
+                        <td className="px-4 py-3 text-right font-mono font-extrabold text-gray-900">{(d.votos_contados || 0).toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right font-mono font-black text-red-700">{d.porcentaje_avance}%</td>
+                        <td className="px-4 py-3 text-center no-export">
+                          <button
+                            onClick={() => setFiltroDistrito(String(d.id))}
+                            className="px-2.5 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-200 flex items-center gap-1 mx-auto"
+                          >
+                            Desglosar Locales
+                            <ChevronRight size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
         </div>
       )}
 
-      {/* SECCIÓN DE BÚSQUEDA AVANZADA Y TABLA DE MESAS */}
+      {/* ========================================================= */}
+      {/* 3. SECCIÓN DE MESAS DE SUFRAGIO Y AUDITORÍA DE ACTAS     */}
+      {/* ========================================================= */}
       {(vistaModo === 'completo' || vistaModo === 'mesas') && (
-        <Card title="🔍 Auditoría y Búsqueda Avanzada de Mesas Electorales">
-          {/* Panel de Búsqueda Avanzada */}
-          <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 mb-6 space-y-3">
+        <Card title="🗳️ Auditoría de Mesas de Sufragio y Actas de Escrutinio">
+          {/* Barra de Filtros Avanzados para la Tabla */}
+          <div className="bg-gray-50 p-4 rounded-xl mb-4 border border-gray-200 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-700 flex items-center">
-                <Filter size={14} className="mr-1.5 text-red-600" />
-                Filtrar Mesas por Distrito, Local y Estado
+              <span className="text-xs font-extrabold text-gray-700 uppercase flex items-center gap-1.5">
+                <Filter size={14} className="text-red-600" />
+                Filtros de Búsqueda de Mesas
               </span>
-              {hasActiveFilters && (
+              {(searchTerm || selectedDistrito || selectedLocal || selectedEstado) && (
                 <button
-                  onClick={handleResetFilters}
-                  className="text-xs text-red-600 hover:text-red-800 font-semibold flex items-center transition-colors"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setSelectedDistrito('');
+                    setSelectedLocal('');
+                    setSelectedEstado('');
+                    setPage(1);
+                  }}
+                  className="text-xs text-red-600 hover:text-red-800 font-bold flex items-center gap-1"
                 >
-                  <X size={13} className="mr-1" />
+                  <X size={13} />
                   Limpiar Filtros
                 </button>
               )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {/* Buscador de texto */}
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Buscar por N° de Mesa</label>
-                <SearchInput
-                  onSearch={(val) => { setSearchTerm(val); setPage(1); }}
-                  placeholder="Ej: 009434..."
-                />
-              </div>
+              <SearchInput
+                placeholder="Buscar por N° mesa..."
+                value={searchTerm}
+                onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
+              />
 
-              {/* Filtro Distrito */}
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Distrito ({distritos.length})</label>
-                <select
-                  value={selectedDistrito}
-                  onChange={handleDistritoChange}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
-                >
-                  <option value="">Todos los distritos</option>
-                  {distritos.map(d => (
-                    <option key={d.id} value={String(d.id)}>{d.nombre}</option>
-                  ))}
-                </select>
-              </div>
+              <select
+                value={selectedDistrito}
+                onChange={(e) => { setSelectedDistrito(e.target.value); setSelectedLocal(''); setPage(1); }}
+                className="text-xs font-medium border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-800 focus:ring-2 focus:ring-red-500 focus:outline-none"
+              >
+                <option value="">Todos los Distritos</option>
+                {distritos.map(d => (
+                  <option key={d.id} value={d.id}>{d.nombre}</option>
+                ))}
+              </select>
 
-              {/* Filtro Local */}
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Local de Votación {selectedDistrito && `(${filteredLocalesForFilter.length})`}
-                </label>
-                <select
-                  value={selectedLocal}
-                  onChange={(e) => { setSelectedLocal(e.target.value); setPage(1); }}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
-                >
-                  <option value="">Todos los locales</option>
-                  {filteredLocalesForFilter.map(l => (
-                    <option key={l.id} value={String(l.id)}>{l.nombre}</option>
-                  ))}
-                </select>
-              </div>
+              <select
+                value={selectedLocal}
+                onChange={(e) => { setSelectedLocal(e.target.value); setPage(1); }}
+                disabled={!selectedDistrito && localesParaFiltroTabla.length === 0}
+                className="text-xs font-medium border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-800 focus:ring-2 focus:ring-red-500 focus:outline-none"
+              >
+                <option value="">Todos los Locales</option>
+                {localesParaFiltroTabla.map(l => (
+                  <option key={l.id} value={l.id}>{l.nombre}</option>
+                ))}
+              </select>
 
-              {/* Filtro Estado */}
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Estado de Mesa</label>
-                <select
-                  value={selectedEstado}
-                  onChange={(e) => { setSelectedEstado(e.target.value); setPage(1); }}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
-                >
-                  <option value="">Todos los estados</option>
-                  <option value="verificada">Verificada</option>
-                  <option value="reportada">Reportada</option>
-                  <option value="observada">Observada</option>
-                  <option value="pendiente">Pendiente</option>
-                </select>
-              </div>
+              <select
+                value={selectedEstado}
+                onChange={(e) => { setSelectedEstado(e.target.value); setPage(1); }}
+                className="text-xs font-medium border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-800 focus:ring-2 focus:ring-red-500 focus:outline-none"
+              >
+                <option value="">Todos los Estados</option>
+                <option value="pendiente">Pendiente</option>
+                <option value="reportada">Reportada / En Revisión</option>
+                <option value="verificada">Verificada (Aprobada)</option>
+                <option value="observada">Observada (Declinada)</option>
+              </select>
             </div>
           </div>
 
           {/* Tabla de Mesas */}
-          <div className="overflow-x-auto">
-            <Table headers={['N° Mesa', 'Distrito', 'Local de Votación', 'Electores', 'Estado', 'Acciones']}>
-              {mesas.map((mesa) => (
-                <tr key={mesa.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3 whitespace-nowrap font-black text-gray-900 text-sm">
-                    Mesa {mesa.numero_mesa}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                    {mesa.distrito_nombre || '-'}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-800 font-medium">
-                    {mesa.local_nombre || '-'}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm font-semibold text-gray-700">
-                    {mesa.total_electores_habiles || 300}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <Badge variant={mesa.estado}>{mesa.estado}</Badge>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-right">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => handleVerDetalle(mesa)}
-                      className="flex items-center text-xs font-bold"
-                    >
-                      <Eye size={14} className="mr-1 text-red-600" />
-                      Ver Acta
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-              {mesas.length === 0 && !loading && (
-                <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-gray-500 text-sm">
-                    No se encontraron mesas con los filtros seleccionados.
-                  </td>
-                </tr>
-              )}
-            </Table>
-          </div>
+          <Table
+            columns={[
+              {
+                header: 'N° Mesa',
+                accessor: 'numero_mesa',
+                cell: (row) => (
+                  <div>
+                    <span className="font-extrabold font-mono text-gray-900">{row.numero_mesa}</span>
+                    <span className="block text-[11px] text-gray-500">{row.total_electores_habiles || 300} electores</span>
+                  </div>
+                )
+              },
+              {
+                header: 'Distrito',
+                accessor: 'distrito_nombre',
+                cell: (row) => <span className="font-medium text-gray-800">{row.distrito_nombre}</span>
+              },
+              {
+                header: 'Local de Votación',
+                accessor: 'local_nombre',
+                cell: (row) => (
+                  <div>
+                    <p className="font-bold text-gray-800 text-xs">{row.local_nombre}</p>
+                    <p className="text-[11px] text-gray-500">{row.local_direccion}</p>
+                  </div>
+                )
+              },
+              {
+                header: 'Estado',
+                accessor: 'estado',
+                cell: (row) => <Badge variant={row.estado}>{row.estado}</Badge>
+              },
+              {
+                header: 'Personero',
+                accessor: 'personero_nombre',
+                cell: (row) => (
+                  row.personero_nombre ? (
+                    <div>
+                      <p className="font-semibold text-xs text-gray-900">{row.personero_nombre}</p>
+                      <p className="text-[11px] text-gray-500">DNI: {row.personero_dni}</p>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-400 italic">Sin asignar</span>
+                  )
+                )
+              },
+              {
+                header: 'Acciones',
+                accessor: 'id',
+                cell: (row) => (
+                  <Button
+                    size="sm"
+                    variant={row.estado === 'pendiente' ? 'secondary' : 'primary'}
+                    onClick={() => handleVerDetalle(row)}
+                    className="flex items-center gap-1 text-xs"
+                  >
+                    <Eye size={13} />
+                    Ver Detalle
+                  </Button>
+                )
+              }
+            ]}
+            data={mesas}
+            loading={loading}
+          />
 
           {/* Paginación */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between pt-4 border-t border-gray-100 text-xs text-gray-600">
-              <span>Página {page} de {totalPages} ({totalMesas} mesas registradas)</span>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={page <= 1}
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                >
-                  Anterior
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage(p => p + 1)}
-                >
-                  Siguiente
-                </Button>
-              </div>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 pt-4 border-t border-gray-200">
+            <span className="text-xs text-gray-500">
+              Mostrando página <strong>{page}</strong> de <strong>{totalPages}</strong> ({totalMesas} mesas totales)
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              >
+                Siguiente
+              </Button>
             </div>
-          )}
+          </div>
         </Card>
       )}
 
-      {/* MODAL DE DETALLE Y AUDITORÍA DE ACTA */}
-      <Modal isOpen={modalDetalleOpen} onClose={() => setModalDetalleOpen(false)} title={`Auditoría de Acta • Mesa ${selectedResultado?.numero_mesa || ''}`} size="lg">
+      {/* ========================================================= */}
+      {/* 4. MODAL DETALLE DE MESA Y VISOR DE ACTA CON ZOOM         */}
+      {/* ========================================================= */}
+      <Modal
+        isOpen={modalDetalleOpen}
+        onClose={() => { setModalDetalleOpen(false); setSelectedResultado(null); }}
+        title={`Detalle Oficial de Mesa N° ${selectedResultado?.numero_mesa || ''}`}
+        size="lg"
+      >
         {loadingDetalle ? (
-          <div className="py-12 flex justify-center">
-            <RefreshCw className="animate-spin text-red-600" size={32} />
+          <div className="flex flex-col items-center justify-center p-8">
+            <RefreshCw className="animate-spin text-red-600 mb-2" size={32} />
+            <p className="text-xs text-gray-500 font-medium">Cargando información del acta...</p>
           </div>
-        ) : selectedResultado?.resultadoDetalle ? (
-          <div className="space-y-6">
-            {/* Cabecera del Acta */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-gray-50 p-3 rounded-lg border border-gray-200 text-xs">
+        ) : selectedResultado ? (
+          <div className="space-y-4">
+            {/* Cabecera del Modal */}
+            <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div>
-                <span className="text-gray-500 block">Mesa / Local:</span>
-                <span className="font-extrabold text-gray-900">Mesa {selectedResultado.numero_mesa}</span>
-                <span className="text-[11px] text-gray-500 block truncate">{selectedResultado.local_nombre}</span>
+                <span className="text-gray-500 block">Distrito:</span>
+                <strong className="text-gray-900">{selectedResultado.distrito_nombre}</strong>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Local:</span>
+                <strong className="text-gray-900">{selectedResultado.local_nombre}</strong>
               </div>
               <div>
                 <span className="text-gray-500 block">Estado Actual:</span>
-                <Badge variant={selectedResultado.resultadoDetalle.estado}>
-                  {selectedResultado.resultadoDetalle.estado}
-                </Badge>
+                <Badge variant={selectedResultado.estado}>{selectedResultado.estado}</Badge>
               </div>
               <div>
-                <span className="text-gray-500 block">Total Votos Emitidos:</span>
-                <span className="font-black text-red-700 text-sm">{selectedResultado.resultadoDetalle.total_votos_emitidos}</span>
-                <span className="text-[11px] text-gray-400 block">Máx. 300 votos</span>
-              </div>
-              <div>
-                <span className="text-gray-500 block">Personero / Responsable:</span>
-                <span className="font-semibold text-gray-800 block truncate">{selectedResultado.resultadoDetalle.personero_nombre || 'No registrado'}</span>
-                <span className="text-[11px] text-gray-400 font-mono">DNI: {selectedResultado.resultadoDetalle.personero_dni || '-'}</span>
+                <span className="text-gray-500 block">Electores Hábiles:</span>
+                <strong className="font-mono text-gray-900">{selectedResultado.total_electores_habiles || 300}</strong>
               </div>
             </div>
 
-            {/* Votos por Candidato */}
-            <div>
-              <h4 className="text-sm font-bold text-gray-900 mb-2 flex items-center">
-                <FileText size={16} className="mr-1.5 text-red-600" />
-                Votación por Organización Política y Candidato
-              </h4>
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <table className="min-w-full divide-y divide-gray-200 text-sm">
-                  <thead className="bg-gray-100 text-gray-700 text-xs font-semibold">
-                    <tr>
-                      <th className="px-4 py-2 text-left">Candidato / Lista</th>
-                      <th className="px-4 py-2 text-left">Organización</th>
-                      <th className="px-4 py-2 text-right">Votos</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
-                    {selectedResultado.resultadoDetalle.detalles?.map((det) => (
-                      <tr key={det.id}>
-                        <td className="px-4 py-2 font-medium text-gray-900">{det.nombre_completo}</td>
-                        <td className="px-4 py-2 text-gray-600 text-xs">{det.organizacion_politica}</td>
-                        <td className="px-4 py-2 text-right font-black text-red-700">{det.votos}</td>
-                      </tr>
-                    ))}
-                    <tr className="bg-gray-50 font-semibold text-gray-700">
-                      <td colSpan={2} className="px-4 py-2 text-left">Votos en Blanco</td>
-                      <td className="px-4 py-2 text-right">{selectedResultado.resultadoDetalle.votos_blanco || 0}</td>
-                    </tr>
-                    <tr className="bg-gray-50 font-semibold text-gray-700">
-                      <td colSpan={2} className="px-4 py-2 text-left">Votos Nulos</td>
-                      <td className="px-4 py-2 text-right">{selectedResultado.resultadoDetalle.votos_nulo || 0}</td>
-                    </tr>
-                    <tr className="bg-gray-50 font-semibold text-gray-700">
-                      <td colSpan={2} className="px-4 py-2 text-left">Votos Impugnados</td>
-                      <td className="px-4 py-2 text-right">{selectedResultado.resultadoDetalle.votos_impugnados || 0}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Foto del Acta Física */}
+            {/* Fotografía del Acta */}
             {modalPhotoUrl ? (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm font-bold text-gray-900 flex items-center">
-                    <ImageIcon size={16} className="mr-1.5 text-red-600" />
-                    Fotografía Original del Acta de Escrutinio
-                  </h4>
-                  <a
-                    href={modalPhotoUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs text-red-600 hover:text-red-800 font-bold flex items-center gap-1"
+              <div className="bg-gray-900 p-2 rounded-xl text-center">
+                <div className="flex justify-between items-center px-2 py-1 text-white text-xs">
+                  <span className="flex items-center gap-1 text-gray-300">
+                    <ImageIcon size={14} /> Fotografía del Acta Transmitida
+                  </span>
+                  <button
+                    onClick={() => setZoomFoto(!zoomFoto)}
+                    className="text-red-400 hover:text-red-300 font-bold flex items-center gap-1"
                   >
                     <ExternalLink size={13} />
-                    Ver Imagen Completa ↗
-                  </a>
+                    {zoomFoto ? 'Reducir' : 'Ampliar Zoom'}
+                  </button>
                 </div>
-                <div className="border border-gray-300 rounded-lg overflow-hidden bg-gray-900 p-2 flex justify-center">
+                <div className={`overflow-auto transition-all ${zoomFoto ? 'max-h-[70vh]' : 'max-h-64'}`}>
                   <img
                     src={modalPhotoUrl}
-                    alt="Foto del Acta Oficial"
-                    className="max-h-96 object-contain rounded shadow"
+                    alt={`Acta Mesa ${selectedResultado.numero_mesa}`}
+                    className="w-full h-auto object-contain rounded-lg mx-auto"
+                    onError={(e) => {
+                      e.target.onerror = null;
+                      e.target.src = 'https://placehold.co/600x400/1e293b/white?text=Foto+del+Acta+No+Disponible';
+                    }}
                   />
                 </div>
               </div>
             ) : (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs flex items-center">
-                <AlertTriangle size={16} className="mr-2 flex-shrink-0" />
-                Esta mesa registró sus votos sin adjuntar fotografía del acta física.
+              <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 text-center text-amber-800 text-xs">
+                <AlertTriangle size={24} className="mx-auto mb-1 text-amber-600" />
+                Esta mesa aún no tiene fotografía de acta transmitida por el personero.
               </div>
             )}
 
-            {/* Observaciones */}
-            {selectedResultado.resultadoDetalle.observaciones_personero && (
-              <div className="bg-gray-50 p-3 rounded text-xs border border-gray-200">
-                <span className="font-semibold text-gray-700 block">Observaciones del Personero:</span>
-                <p className="text-gray-600 mt-1">{selectedResultado.resultadoDetalle.observaciones_personero}</p>
-              </div>
-            )}
-            {selectedResultado.resultadoDetalle.observaciones_coordinador && (
-              <div className="bg-red-50 p-3 rounded text-xs border border-red-200">
-                <span className="font-bold text-red-800 block">Observaciones del Coordinador:</span>
-                <p className="text-red-700 mt-1">{selectedResultado.resultadoDetalle.observaciones_coordinador}</p>
+            {/* Votos del Acta */}
+            {selectedResultado.resultadoDetalle?.votos && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-gray-700 uppercase">Votos Registrados en el Acta</h4>
+                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-xl">
+                  <table className="min-w-full divide-y divide-gray-200 text-xs">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Candidato / Opción</th>
+                        <th className="px-3 py-2 text-right">Votos</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white font-mono">
+                      {selectedResultado.resultadoDetalle.votos.map((v, i) => (
+                        <tr key={i}>
+                          <td className="px-3 py-1.5 font-bold font-sans text-gray-900">{v.candidato_nombre}</td>
+                          <td className="px-3 py-1.5 text-right font-extrabold text-red-700">{v.votos}</td>
+                        </tr>
+                      ))}
+                      <tr className="bg-gray-50 font-bold">
+                        <td className="px-3 py-1.5 font-sans">Votos en Blanco</td>
+                        <td className="px-3 py-1.5 text-right">{selectedResultado.resultadoDetalle.votos_blanco || 0}</td>
+                      </tr>
+                      <tr className="bg-gray-50 font-bold">
+                        <td className="px-3 py-1.5 font-sans">Votos Nulos</td>
+                        <td className="px-3 py-1.5 text-right">{selectedResultado.resultadoDetalle.votos_nulo || 0}</td>
+                      </tr>
+                      <tr className="bg-gray-50 font-bold">
+                        <td className="px-3 py-1.5 font-sans">Votos Impugnados</td>
+                        <td className="px-3 py-1.5 text-right">{selectedResultado.resultadoDetalle.votos_impugnados || 0}</td>
+                      </tr>
+                      <tr className="bg-red-50 text-red-900 font-black">
+                        <td className="px-3 py-2 font-sans">TOTAL VOTOS EMITIDOS</td>
+                        <td className="px-3 py-2 text-right text-sm">{selectedResultado.resultadoDetalle.total_votos_emitidos || 0}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
-        ) : (
-          <div className="py-10 text-center text-gray-500 text-sm">
-            Esta mesa aún se encuentra en estado <span className="font-semibold text-amber-600">Pendiente</span>. El personero asignado todavía no ha transmitido los resultados de la mesa.
-          </div>
-        )}
-
-        <div className="mt-6 flex justify-end pt-2 border-t border-gray-200">
-          <Button variant="secondary" onClick={() => setModalDetalleOpen(false)}>
-            Cerrar
-          </Button>
-        </div>
+        ) : null}
       </Modal>
+
     </div>
   );
 };
