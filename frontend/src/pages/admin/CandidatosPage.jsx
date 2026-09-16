@@ -68,7 +68,7 @@ const CandidatosPage = () => {
       const payload = {
         nombre_completo: nombreCompleto.trim(),
         organizacion_politica: organizacionPolitica.trim(),
-        siglas: siglas.trim() || undefined,
+        siglas: siglas.trim(),
         numero_lista: Number(numeroLista)
       };
 
