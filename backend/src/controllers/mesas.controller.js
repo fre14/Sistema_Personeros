@@ -3,15 +3,31 @@ import { registrarAuditoria } from '../services/auditoria.service.js';
 
 export const getAll = async (req, res) => {
   try {
-    const { local_id, distrito_id, estado, q, page = 1, limit = 50 } = req.query;
+    const { local_id, distrito_id, estado, q, disponible, page = 1, limit = 50 } = req.query;
     let query = db('mesas')
       .join('locales', 'mesas.local_id', 'locales.id')
       .join('distritos', 'locales.distrito_id', 'distritos.id')
-      .select('mesas.*', 'locales.nombre as local_nombre', 'distritos.nombre as distrito_nombre');
+      .leftJoin('asignacion_personeros', function() {
+        this.on('mesas.id', '=', 'asignacion_personeros.mesa_id')
+            .andOn('asignacion_personeros.activo', '=', db.raw('true'));
+      })
+      .leftJoin('usuarios', 'asignacion_personeros.usuario_id', 'usuarios.id')
+      .select(
+        'mesas.*',
+        'locales.nombre as local_nombre',
+        'locales.distrito_id',
+        'distritos.nombre as distrito_nombre',
+        'asignacion_personeros.id as asignacion_id',
+        'usuarios.dni as personero_dni',
+        db.raw("CONCAT(usuarios.nombres, ' ', usuarios.apellidos) as personero_nombre")
+      );
     
     if (local_id) query = query.where('mesas.local_id', local_id);
     if (distrito_id) query = query.where('locales.distrito_id', distrito_id);
     if (estado) query = query.where('mesas.estado', estado);
+    if (disponible === 'true') {
+      query = query.whereNull('asignacion_personeros.id');
+    }
     if (q) {
       query = query.where(function() {
         this.where('mesas.numero_mesa', 'ilike', `%${q}%`)
@@ -19,13 +35,16 @@ export const getAll = async (req, res) => {
       });
     }
     
+    const parsedLimit = Number(limit) || 50;
+    const parsedPage = Number(page) || 1;
+
     const totalQuery = query.clone().clearSelect().count('* as total').first();
     const [totalRes, mesas] = await Promise.all([
       totalQuery,
-      query.orderBy('mesas.numero_mesa', 'asc').limit(limit).offset((page - 1) * limit)
+      query.orderBy('mesas.numero_mesa', 'asc').limit(parsedLimit).offset((parsedPage - 1) * parsedLimit)
     ]);
     
-    res.json({ success: true, data: mesas, meta: { total: parseInt(totalRes.total), page: Number(page), limit: Number(limit) }, message: 'Mesas listadas' });
+    res.json({ success: true, data: mesas, meta: { total: parseInt(totalRes.total), page: parsedPage, limit: parsedLimit }, message: 'Mesas listadas' });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error listando mesas', error: error.message });
   }

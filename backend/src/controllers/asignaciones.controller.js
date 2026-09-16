@@ -11,6 +11,9 @@ export const asignarPersonero = async (req, res) => {
       const mesa = await trx('mesas').where({ id: mesa_id }).first();
       if (!mesa) return res.status(400).json({ success: false, message: 'Mesa inválida' });
       
+      const existingUser = await trx('asignacion_personeros').where({ usuario_id, activo: true }).first();
+      if (existingUser) return res.status(400).json({ success: false, message: 'El personero ya tiene una mesa asignada' });
+
       const existing = await trx('asignacion_personeros').where({ mesa_id, activo: true }).first();
       if (existing) return res.status(400).json({ success: false, message: 'Mesa ya tiene personero asignado' });
       
@@ -18,10 +21,11 @@ export const asignarPersonero = async (req, res) => {
       const id = idRes.id || idRes;
       
       await trx('historial_asignaciones').insert({
-        tipo_asignacion: 'personero',
-        entidad_id: mesa_id,
+        tipo: 'personero',
+        mesa_id: mesa_id,
         usuario_nuevo_id: usuario_id,
-        motivo_cambio: 'Asignación inicial'
+        motivo_cambio: 'Asignación inicial',
+        cambiado_por: req.user?.id || null
       });
       
       const asignacion = await trx('asignacion_personeros').where({ id }).first();
@@ -30,6 +34,7 @@ export const asignarPersonero = async (req, res) => {
       res.status(201).json({ success: true, data: asignacion, message: 'Personero asignado' });
     });
   } catch (error) {
+    console.error('Error asignando personero:', error);
     res.status(500).json({ success: false, message: 'Error asignando personero', error: error.message });
   }
 };
@@ -56,11 +61,12 @@ export const reasignarPersonero = async (req, res) => {
       const newId = newIdRes.id || newIdRes;
       
       await trx('historial_asignaciones').insert({
-        tipo_asignacion: 'personero',
-        entidad_id: current.mesa_id,
+        tipo: 'personero',
+        mesa_id: current.mesa_id,
         usuario_anterior_id: current.usuario_id,
         usuario_nuevo_id: usuario_nuevo_id,
-        motivo_cambio: motivo_cambio || 'Reasignación'
+        motivo_cambio: motivo_cambio || 'Reasignación',
+        cambiado_por: req.user?.id || null
       });
       
       const newAsignacion = await trx('asignacion_personeros').where({ id: newId }).first();
@@ -69,6 +75,7 @@ export const reasignarPersonero = async (req, res) => {
       res.json({ success: true, data: newAsignacion, message: 'Personero reasignado' });
     });
   } catch (error) {
+    console.error('Error reasignando personero:', error);
     res.status(500).json({ success: false, message: 'Error reasignando personero', error: error.message });
   }
 };
@@ -83,14 +90,18 @@ export const asignarCoordinador = async (req, res) => {
       const local = await trx('locales').where({ id: local_id }).first();
       if (!local) return res.status(400).json({ success: false, message: 'Local inválido' });
       
+      const existing = await trx('asignacion_coordinadores').where({ usuario_id, local_id, activo: true }).first();
+      if (existing) return res.status(400).json({ success: false, message: 'El coordinador ya está asignado a este local' });
+
       const [idRes] = await trx('asignacion_coordinadores').insert({ usuario_id, local_id, activo: true }).returning('id');
       const id = idRes.id || idRes;
       
       await trx('historial_asignaciones').insert({
-        tipo_asignacion: 'coordinador',
-        entidad_id: local_id,
+        tipo: 'coordinador',
+        local_id: local_id,
         usuario_nuevo_id: usuario_id,
-        motivo_cambio: 'Asignación inicial'
+        motivo_cambio: 'Asignación inicial',
+        cambiado_por: req.user?.id || null
       });
       
       const asignacion = await trx('asignacion_coordinadores').where({ id }).first();
@@ -99,6 +110,7 @@ export const asignarCoordinador = async (req, res) => {
       res.status(201).json({ success: true, data: asignacion, message: 'Coordinador asignado' });
     });
   } catch (error) {
+    console.error('Error asignando coordinador:', error);
     res.status(500).json({ success: false, message: 'Error asignando coordinador', error: error.message });
   }
 };
@@ -125,11 +137,12 @@ export const reasignarCoordinador = async (req, res) => {
       const newId = newIdRes.id || newIdRes;
       
       await trx('historial_asignaciones').insert({
-        tipo_asignacion: 'coordinador',
-        entidad_id: current.local_id,
+        tipo: 'coordinador',
+        local_id: current.local_id,
         usuario_anterior_id: current.usuario_id,
         usuario_nuevo_id: usuario_nuevo_id,
-        motivo_cambio: motivo_cambio || 'Reasignación'
+        motivo_cambio: motivo_cambio || 'Reasignación',
+        cambiado_por: req.user?.id || null
       });
       
       const newAsignacion = await trx('asignacion_coordinadores').where({ id: newId }).first();
@@ -138,6 +151,7 @@ export const reasignarCoordinador = async (req, res) => {
       res.json({ success: true, data: newAsignacion, message: 'Coordinador reasignado' });
     });
   } catch (error) {
+    console.error('Error reasignando coordinador:', error);
     res.status(500).json({ success: false, message: 'Error reasignando coordinador', error: error.message });
   }
 };
@@ -205,11 +219,11 @@ export const getHistorial = async (req, res) => {
     const { tipo, fecha_inicio, fecha_fin } = req.query;
     let query = db('historial_asignaciones');
     
-    if (tipo) query = query.where({ tipo_asignacion: tipo });
-    if (fecha_inicio) query = query.where('created_at', '>=', fecha_inicio);
-    if (fecha_fin) query = query.where('created_at', '<=', fecha_fin);
+    if (tipo) query = query.where({ tipo });
+    if (fecha_inicio) query = query.where('fecha_cambio', '>=', fecha_inicio);
+    if (fecha_fin) query = query.where('fecha_cambio', '<=', fecha_fin);
     
-    const list = await query.orderBy('created_at', 'desc');
+    const list = await query.orderBy('fecha_cambio', 'desc');
     res.json({ success: true, data: list, message: 'Historial listado' });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error listando historial', error: error.message });
@@ -226,16 +240,19 @@ export const removeAsignacionPersonero = async (req, res) => {
       await trx('asignacion_personeros').where({ id }).update({ activo: false });
       
       await trx('historial_asignaciones').insert({
-        tipo_asignacion: 'personero',
-        entidad_id: current.mesa_id,
+        tipo: 'personero',
+        mesa_id: current.mesa_id,
         usuario_anterior_id: current.usuario_id,
-        motivo_cambio: 'Eliminación de asignación'
+        usuario_nuevo_id: null,
+        motivo_cambio: 'Eliminación de asignación',
+        cambiado_por: req.user?.id || null
       });
       
       await registrarAuditoria('asignacion_personeros', 'delete', req.user.id, { id }, { activo: false }, current, trx);
       res.json({ success: true, data: null, message: 'Asignación eliminada' });
     });
   } catch (error) {
+    console.error('Error eliminando asignación personero:', error);
     res.status(500).json({ success: false, message: 'Error eliminando asignación', error: error.message });
   }
 };
@@ -250,16 +267,19 @@ export const removeAsignacionCoordinador = async (req, res) => {
       await trx('asignacion_coordinadores').where({ id }).update({ activo: false });
       
       await trx('historial_asignaciones').insert({
-        tipo_asignacion: 'coordinador',
-        entidad_id: current.local_id,
+        tipo: 'coordinador',
+        local_id: current.local_id,
         usuario_anterior_id: current.usuario_id,
-        motivo_cambio: 'Eliminación de asignación'
+        usuario_nuevo_id: null,
+        motivo_cambio: 'Eliminación de asignación',
+        cambiado_por: req.user?.id || null
       });
       
       await registrarAuditoria('asignacion_coordinadores', 'delete', req.user.id, { id }, { activo: false }, current, trx);
       res.json({ success: true, data: null, message: 'Asignación eliminada' });
     });
   } catch (error) {
+    console.error('Error eliminando asignación coordinador:', error);
     res.status(500).json({ success: false, message: 'Error eliminando asignación', error: error.message });
   }
 };
