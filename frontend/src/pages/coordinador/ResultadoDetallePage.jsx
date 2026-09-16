@@ -24,7 +24,7 @@ const ResultadoDetallePage = () => {
   const fetchDetalle = async () => {
     try {
       const res = await get(`/resultados/${id}`);
-      setResultado(res.data);
+      setResultado(res.data?.data || res.data);
     } catch (error) {
       toast.error('Error al cargar detalle');
     } finally {

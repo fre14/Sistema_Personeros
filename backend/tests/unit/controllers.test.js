@@ -12,20 +12,32 @@ import { jest } from '@jest/globals';
 const mockInsert = jest.fn();
 const mockDbChain = {
   where: jest.fn().mockReturnThis(),
+  whereIn: jest.fn().mockReturnThis(),
+  andWhere: jest.fn().mockReturnThis(),
+  orWhere: jest.fn().mockReturnThis(),
   join: jest.fn().mockReturnThis(),
+  leftJoin: jest.fn().mockReturnThis(),
   select: jest.fn().mockReturnThis(),
   first: jest.fn(),
   count: jest.fn().mockReturnThis(),
+  countDistinct: jest.fn().mockReturnThis(),
   sum: jest.fn().mockReturnThis(),
   groupBy: jest.fn().mockReturnThis(),
   orderBy: jest.fn().mockReturnThis(),
   limit: jest.fn().mockReturnThis(),
+  offset: jest.fn().mockReturnThis(),
+  clone: jest.fn().mockReturnThis(),
+  clearSelect: jest.fn().mockReturnThis(),
+  clearOrder: jest.fn().mockReturnThis(),
   insert: jest.fn().mockReturnValue({ returning: jest.fn() }),
   update: jest.fn(),
+  del: jest.fn(),
+  raw: jest.fn((sql) => sql),
 };
 
 const mockDb = jest.fn(() => mockDbChain);
 mockDb.fn = { now: jest.fn() };
+mockDb.raw = jest.fn((sql) => sql);
 
 jest.unstable_mockModule('../../src/config/database.js', () => ({
   default: mockDb,
@@ -47,6 +59,13 @@ jest.unstable_mockModule('../../src/services/storage.service.js', () => ({
   uploadActaImage: jest.fn(),
   getActaUrl: jest.fn(),
   deleteActaImage: jest.fn(),
+}));
+
+jest.unstable_mockModule('../../src/services/cache.service.js', () => ({
+  cacheWrap: jest.fn((key, ttl, fn) => fn()),
+  cacheGet: jest.fn().mockResolvedValue(null),
+  cacheSet: jest.fn().mockResolvedValue(),
+  invalidateDashboard: jest.fn().mockResolvedValue(),
 }));
 
 // ═══════════════════════════════════════════════════════
@@ -386,6 +405,7 @@ describe('Dashboard Controller', () => {
         .mockResolvedValueOnce({ c: '800' })   // total_personeros
         .mockResolvedValueOnce({ c: '750' })   // personeros_asig
         .mockResolvedValueOnce({ c: '96' })    // total_locales
+        .mockResolvedValueOnce({ c: '20' })    // total_coordinadores
         .mockResolvedValueOnce({ s: '50000' }); // total_votos
 
       // mesas_estados groupBy returns array
@@ -479,15 +499,9 @@ describe('Dashboard Controller', () => {
       const req = mockReq({ query: {} });
       const res = mockRes();
 
-      // The query chain ends without .first(), so mock the final resolution
-      mockDb.mockImplementationOnce(() => ({
-        ...mockDbChain,
-        join: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        select: jest.fn().mockResolvedValue([
-          { id: 1, numero_mesa: '000101', estado: 'pendiente', local_nombre: 'IE Test' },
-        ]),
-      }));
+      mockDbChain.limit.mockResolvedValueOnce([
+        { id: 1, numero_mesa: '000101', estado: 'pendiente', local_nombre: 'IE Test' },
+      ]);
 
       await dashboardController.getMesasPendientes(req, res);
 
@@ -502,7 +516,8 @@ describe('Dashboard Controller', () => {
       const req = mockReq();
       const res = mockRes();
 
-      mockDbChain.limit.mockResolvedValueOnce([
+      mockDbChain.first.mockResolvedValueOnce({ count: '2' });
+      mockDbChain.offset.mockResolvedValueOnce([
         { id: 1, tabla_afectada: 'usuarios', accion: 'INSERT' },
         { id: 2, tabla_afectada: 'mesas', accion: 'UPDATE' },
       ]);
@@ -521,7 +536,7 @@ describe('Dashboard Controller', () => {
       const req = mockReq();
       const res = mockRes();
 
-      mockDbChain.limit.mockRejectedValueOnce(new Error('DB error'));
+      mockDbChain.first.mockRejectedValueOnce(new Error('DB error'));
 
       await dashboardController.getAuditoria(req, res);
 
@@ -530,27 +545,68 @@ describe('Dashboard Controller', () => {
   });
 
   describe('getResultadosPorDistrito', () => {
-    it('debe retornar array (stub simplificado)', async () => {
+    it('debe retornar array de resultados por distrito', async () => {
       const req = mockReq();
       const res = mockRes();
+
+      mockDb.mockImplementationOnce(() => ({
+        ...mockDbChain,
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        count: jest.fn().mockReturnThis(),
+        countDistinct: jest.fn().mockReturnThis(),
+        sum: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockResolvedValue([
+          { id: 1, nombre: 'Ayacucho', codigo: '050101', total_locales: 10, total_mesas: 50, votos_contados: 1000 },
+        ]),
+      })).mockImplementationOnce(() => ({
+        ...mockDbChain,
+        join: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        count: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockResolvedValue([
+          { distrito_id: 1, c: 20 },
+        ]),
+      }));
 
       await dashboardController.getResultadosPorDistrito(req, res);
 
       expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ success: true, data: [] })
+        expect.objectContaining({ success: true, data: expect.any(Array) })
       );
     });
   });
 
   describe('getResultadosPorLocal (dashboard)', () => {
-    it('debe retornar array (stub simplificado)', async () => {
-      const req = mockReq();
+    it('debe retornar array de resultados por local', async () => {
+      const req = mockReq({ query: {} });
       const res = mockRes();
+
+      mockDb.mockImplementationOnce(() => ({
+        ...mockDbChain,
+        join: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        count: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockResolvedValue([
+          { id: 1, nombre: 'IE Test', direccion: 'Av 1', distrito_nombre: 'Ayacucho', total_mesas: 10 },
+        ]),
+      })).mockImplementationOnce(() => ({
+        ...mockDbChain,
+        select: jest.fn().mockReturnThis(),
+        count: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockResolvedValue([
+          { local_id: 1, estado: 'verificada', c: 5 },
+        ]),
+      }));
 
       await dashboardController.getResultadosPorLocal(req, res);
 
       expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ success: true, data: [] })
+        expect.objectContaining({ success: true, data: expect.any(Array) })
       );
     });
   });

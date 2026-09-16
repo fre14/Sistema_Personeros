@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { MapPin, LogOut, Menu } from 'lucide-react';
+import { MapPin, Users, LogOut, Menu } from 'lucide-react';
 
 const CoordinadorLayout = () => {
   const { user, logout } = useAuth();
@@ -43,6 +43,17 @@ const CoordinadorLayout = () => {
               >
                 <MapPin className="mr-3 h-5 w-5" />
                 Mis Locales
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/coordinador/personeros"
+                className={({ isActive }) => 
+                  `flex items-center px-4 py-3 text-sm font-medium transition-colors ${isActive ? 'bg-red-800 text-white border-l-4 border-white font-bold' : 'text-red-100 hover:bg-red-800/70 hover:text-white border-l-4 border-transparent'}`
+                }
+              >
+                <Users className="mr-3 h-5 w-5" />
+                Personeros Supervisados
               </NavLink>
             </li>
           </ul>

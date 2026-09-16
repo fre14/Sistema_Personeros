@@ -2,28 +2,72 @@ import knex from 'knex';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const environment = process.env.NODE_ENV || 'development';
+/**
+ * Conexion a PostgreSQL.
+ *
+ * El pool por defecto de la version anterior era min 2 / max 20. Con 800
+ * usuarios concurrentes esas 20 conexiones se agotan y las peticiones se
+ * quedan esperando hasta fallar por timeout. Aqui el tamano se controla por
+ * variable de entorno para poder ajustarlo sin tocar codigo.
+ *
+ * Regla practica: DB_POOL_MAX x numero_de_instancias <= max_connections de
+ * PostgreSQL (menos un margen para tareas administrativas). Con PgBouncer
+ * delante, el limite real lo pone PgBouncer y se puede subir sin miedo.
+ */
 
-const isRemote = process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost');
+const usaSSL = (valor) => {
+  if (String(process.env.DB_SSL || '').toLowerCase() === 'false') return false;
+  if (String(process.env.DB_SSL || '').toLowerCase() === 'true') return { rejectUnauthorized: false };
+  // Autodeteccion: solo SSL si la base es remota
+  if (!valor) return false;
+  const local = valor.includes('localhost') || valor.includes('127.0.0.1') ||
+                valor.includes('postgres') || valor.includes('pgbouncer');
+  return local ? false : { rejectUnauthorized: false };
+};
 
-const connectionConfig = process.env.DATABASE_URL
+const connection = process.env.DATABASE_URL
   ? {
       connectionString: process.env.DATABASE_URL,
-      ssl: isRemote ? { rejectUnauthorized: false } : false,
+      ssl: usaSSL(process.env.DATABASE_URL),
+      application_name: process.env.INSTANCE_ID || 'sistema-electoral',
     }
   : {
       host: process.env.DB_HOST || 'localhost',
       port: Number(process.env.DB_PORT) || 5432,
-      database: process.env.DB_NAME || 'postgres',
+      database: process.env.DB_NAME || 'sistema_electoral',
       user: process.env.DB_USER || 'postgres',
       password: process.env.DB_PASSWORD || 'postgres',
-      ssl: process.env.DB_HOST && !process.env.DB_HOST.includes('localhost') ? { rejectUnauthorized: false } : false,
+      ssl: usaSSL(process.env.DB_HOST),
+      application_name: process.env.INSTANCE_ID || 'sistema-electoral',
     };
 
 const db = knex({
   client: 'pg',
-  connection: connectionConfig,
-  pool: { min: 2, max: 20 },
+  connection,
+  pool: {
+    min: Number(process.env.DB_POOL_MIN || 5),
+    max: Number(process.env.DB_POOL_MAX || 40),
+    acquireTimeoutMillis: Number(process.env.DB_ACQUIRE_TIMEOUT || 10000),
+    createTimeoutMillis: 10000,
+    idleTimeoutMillis: 30000,
+    reapIntervalMillis: 1000,
+    propagateCreateError: false,
+  },
+  acquireConnectionTimeout: Number(process.env.DB_ACQUIRE_TIMEOUT || 10000),
 });
+
+// Aviso temprano de saturacion: si aparece en los logs, hay que subir el pool
+// o activar PgBouncer antes de que la jornada llegue al pico.
+if (process.env.NODE_ENV === 'production') {
+  setInterval(() => {
+    const pool = db.client?.pool;
+    if (!pool) return;
+    const enEspera = pool.numPendingAcquires?.() ?? 0;
+    if (enEspera > 5) {
+      console.warn(`AVISO pool saturado: ${enEspera} peticiones esperando conexion ` +
+        `(usadas ${pool.numUsed?.()}, libres ${pool.numFree?.()})`);
+    }
+  }, 15000).unref();
+}
 
 export default db;

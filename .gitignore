@@ -1,26 +1,33 @@
-# Dependencies
+# Dependencias
 node_modules/
+.npm
 
-# Environment files
+# Variables de entorno (NUNCA subir: contienen contrasenas)
 .env
 .env.local
-.env.*.local
+.env.production
+*/.env
 
-# Build outputs
+# Compilados
 dist/
 build/
+coverage/
 
-# OS files
-.DS_Store
-Thumbs.db
+# Respaldos y actas
+backups/*.sql
+backups/*.gz
+uploads/
+nginx/ssl/
 
-# Logs
+# Registros
 *.log
 npm-debug.log*
 
-# IDE
+# Sistema
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
 
-# SSL certificates (keep in server, not in repo)
-nginx/ssl/
+# Resultados de pruebas de carga
+resumen-carga.json

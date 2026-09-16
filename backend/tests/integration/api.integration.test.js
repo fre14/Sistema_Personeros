@@ -37,7 +37,7 @@ let testResultadoId;
 
 beforeAll(async () => {
   // Dynamically import db to ensure env vars are applied
-  const dbModule = await import('../../src/config/db.js');
+  const dbModule = await import('../../src/config/database.js');
   db = dbModule.default;
 
   // Run migrations

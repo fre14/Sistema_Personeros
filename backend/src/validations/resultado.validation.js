@@ -16,5 +16,8 @@ export const subirResultadoSchema = z.object({
 export const verificarResultadoSchema = z.object({});
 
 export const observarResultadoSchema = z.object({
-  observaciones_coordinador: z.string().min(1, 'Las observaciones son requeridas')
+  observaciones_coordinador: z.string().optional(),
+  observacion: z.string().optional()
+}).refine(data => (data.observaciones_coordinador && data.observaciones_coordinador.trim().length > 0) || (data.observacion && data.observacion.trim().length > 0), {
+  message: 'Las observaciones son requeridas'
 });

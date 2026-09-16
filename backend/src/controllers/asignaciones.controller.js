@@ -8,7 +8,7 @@ export const asignarPersonero = async (req, res) => {
       const user = await trx('usuarios').where({ id: usuario_id, rol: 'personero', activo: true }).first();
       if (!user) return res.status(400).json({ success: false, message: 'Usuario inválido o no es personero' });
       
-      const mesa = await trx('mesas').where({ id: mesa_id }).first();
+      const mesa = await trx('mesas_sufragio as mesas').where({ id: mesa_id }).first();
       if (!mesa) return res.status(400).json({ success: false, message: 'Mesa inválida' });
       
       const existingUser = await trx('asignacion_personeros').where({ usuario_id, activo: true }).first();
@@ -87,7 +87,7 @@ export const asignarCoordinador = async (req, res) => {
       const user = await trx('usuarios').where({ id: usuario_id, rol: 'coordinador', activo: true }).first();
       if (!user) return res.status(400).json({ success: false, message: 'Usuario inválido o no es coordinador' });
       
-      const local = await trx('locales').where({ id: local_id }).first();
+      const local = await trx('locales_votacion as locales').where({ id: local_id }).first();
       if (!local) return res.status(400).json({ success: false, message: 'Local inválido' });
       
       const existing = await trx('asignacion_coordinadores').where({ usuario_id, local_id, activo: true }).first();
@@ -161,8 +161,8 @@ export const getAsignacionesPersoneros = async (req, res) => {
     const { local_id, distrito_id, q } = req.query;
     let query = db('asignacion_personeros')
       .join('usuarios', 'asignacion_personeros.usuario_id', 'usuarios.id')
-      .join('mesas', 'asignacion_personeros.mesa_id', 'mesas.id')
-      .join('locales', 'mesas.local_id', 'locales.id')
+      .join('mesas_sufragio as mesas', 'asignacion_personeros.mesa_id', 'mesas.id')
+      .join('locales_votacion as locales', 'mesas.local_id', 'locales.id')
       .join('distritos', 'locales.distrito_id', 'distritos.id')
       .select('asignacion_personeros.*', 'usuarios.nombres', 'usuarios.apellidos', 'usuarios.dni', 'mesas.numero_mesa', 'locales.nombre as local_nombre', 'distritos.nombre as distrito_nombre')
       .where('asignacion_personeros.activo', true);
@@ -191,7 +191,7 @@ export const getAsignacionesCoordinadores = async (req, res) => {
     const { local_id, distrito_id, q } = req.query;
     let query = db('asignacion_coordinadores')
       .join('usuarios', 'asignacion_coordinadores.usuario_id', 'usuarios.id')
-      .join('locales', 'asignacion_coordinadores.local_id', 'locales.id')
+      .join('locales_votacion as locales', 'asignacion_coordinadores.local_id', 'locales.id')
       .join('distritos', 'locales.distrito_id', 'distritos.id')
       .select('asignacion_coordinadores.*', 'usuarios.nombres', 'usuarios.apellidos', 'usuarios.dni', 'locales.nombre as local_nombre', 'distritos.nombre as distrito_nombre')
       .where('asignacion_coordinadores.activo', true);

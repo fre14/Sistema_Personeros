@@ -1,68 +1,80 @@
 import { v4 as uuidv4 } from 'uuid';
-import { supabase, bucketName } from '../config/storage.js';
+import fs from 'fs/promises';
+import path from 'path';
+import { supabase, bucketName, storageConfig } from '../config/storage.js';
 
 /**
- * Upload an acta image to Supabase Storage
- * @param {Buffer} fileBuffer - The image buffer
- * @param {string} mimeType - The MIME type (image/jpeg, image/png)
- * @param {string} mesaNumero - The mesa number for organizing files
- * @returns {Promise<string>} The storage path/key
+ * Guarda y recupera las fotos de las actas.
+ *
+ * La version anterior lanzaba un error si Supabase no estaba configurado,
+ * lo que dejaba a los personeros sin poder enviar el acta. Ahora el modo
+ * local funciona sin ninguna configuracion previa.
  */
-export async function uploadActaImage(fileBuffer, mimeType, mesaNumero) {
-  if (!supabase) {
-    throw new Error('Storage service not configured. Check SUPABASE_URL and SUPABASE_SERVICE_KEY.');
-  }
 
+const asegurarCarpeta = async (dir) => {
+  await fs.mkdir(dir, { recursive: true });
+};
+
+/**
+ * @param {Buffer} buffer contenido de la imagen
+ * @param {string} mimeType image/jpeg o image/png
+ * @param {string|number} mesaNumero para organizar los archivos
+ * @returns {Promise<string>} ruta interna del archivo guardado
+ */
+export async function uploadActaImage(buffer, mimeType, mesaNumero) {
   const ext = mimeType === 'image/png' ? 'png' : 'jpg';
-  const fileName = `${uuidv4()}.${ext}`;
-  const filePath = `actas/${mesaNumero}/${fileName}`;
+  const nombre = `${Date.now()}-${uuidv4()}.${ext}`;
+  const rutaRelativa = path.posix.join('actas', String(mesaNumero), nombre);
 
-  const { data, error } = await supabase.storage
-    .from(bucketName)
-    .upload(filePath, fileBuffer, {
-      contentType: mimeType,
-      upsert: false,
-    });
+  if (storageConfig.driver === 'supabase' && supabase) {
+    const { error } = await supabase.storage
+      .from(bucketName)
+      .upload(rutaRelativa, buffer, { contentType: mimeType, upsert: false });
 
-  if (error) {
-    throw new Error(`Error uploading image: ${error.message}`);
+    if (error) throw new Error(`Error subiendo la imagen: ${error.message}`);
+    return rutaRelativa;
   }
 
-  return filePath;
+  // ── Modo local ──
+  const destino = path.join(storageConfig.localPath, rutaRelativa);
+  await asegurarCarpeta(path.dirname(destino));
+  await fs.writeFile(destino, buffer);
+  return rutaRelativa;
 }
 
 /**
- * Get a signed URL for an acta image
- * @param {string} filePath - The storage path
- * @returns {Promise<string>} The signed URL (valid for 1 hour)
+ * Devuelve una URL que el navegador puede abrir.
+ * En local es una ruta servida por Nginx; en Supabase, una URL firmada.
  */
-export async function getActaUrl(filePath) {
-  if (!supabase || !filePath) return null;
+export async function getActaUrl(rutaRelativa) {
+  if (!rutaRelativa) return null;
 
-  const { data, error } = await supabase.storage
-    .from(bucketName)
-    .createSignedUrl(filePath, 3600); // 1 hour
-
-  if (error) {
-    console.error('Error getting signed URL:', error.message);
-    return null;
+  if (storageConfig.driver === 'supabase' && supabase) {
+    const { data, error } = await supabase.storage
+      .from(bucketName)
+      .createSignedUrl(rutaRelativa, 3600);
+    if (error) {
+      console.error('Error generando URL firmada:', error.message);
+      return null;
+    }
+    return data.signedUrl;
   }
 
-  return data.signedUrl;
+  return `${storageConfig.publicUrl}/${rutaRelativa}`.replace(/\/{2,}/g, '/');
 }
 
-/**
- * Delete an acta image from storage
- * @param {string} filePath - The storage path to delete
- */
-export async function deleteActaImage(filePath) {
-  if (!supabase || !filePath) return;
+export async function deleteActaImage(rutaRelativa) {
+  if (!rutaRelativa) return;
 
-  const { error } = await supabase.storage
-    .from(bucketName)
-    .remove([filePath]);
+  if (storageConfig.driver === 'supabase' && supabase) {
+    const { error } = await supabase.storage.from(bucketName).remove([rutaRelativa]);
+    if (error) console.error('Error eliminando imagen:', error.message);
+    return;
+  }
 
-  if (error) {
-    console.error('Error deleting image:', error.message);
+  try {
+    await fs.unlink(path.join(storageConfig.localPath, rutaRelativa));
+  } catch {
+    /* si el archivo ya no existe, no es un error */
   }
 }

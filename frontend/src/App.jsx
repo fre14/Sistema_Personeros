@@ -1,34 +1,50 @@
-import React, { useEffect } from 'react';
-import { RouterProvider, createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
+import React, { Suspense, lazy } from 'react';
+import { RouterProvider, createBrowserRouter, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SocketProvider } from './contexts/SocketContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import Spinner from './components/ui/Spinner';
 
-// Layouts
-import AdminLayout from './components/layout/AdminLayout';
-import CoordinadorLayout from './components/layout/CoordinadorLayout';
-import PersoneroLayout from './components/layout/PersoneroLayout';
+/**
+ * Carga diferida por rol.
+ *
+ * Antes el paquete incluia todas las pantallas: un personero con celular de
+ * gama baja y red 3G descargaba tambien el panel de administracion, la
+ * auditoria y las graficas. Ahora cada rol descarga solo lo suyo.
+ */
 
-// Pages
-import LoginPage from './pages/auth/LoginPage';
-import AdminDashboard from './pages/admin/AdminDashboard';
-import UsuariosPage from './pages/admin/UsuariosPage';
-import LocalesPage from './pages/admin/LocalesPage';
-import MesasPage from './pages/admin/MesasPage';
-import CandidatosPage from './pages/admin/CandidatosPage';
-import AsignacionesPage from './pages/admin/AsignacionesPage';
-import ResultadosAdminPage from './pages/admin/ResultadosAdminPage';
-import AuditoriaPage from './pages/admin/AuditoriaPage';
-import MisLocalesPage from './pages/coordinador/MisLocalesPage';
-import MesasLocalPage from './pages/coordinador/MesasLocalPage';
-import ResultadoDetallePage from './pages/coordinador/ResultadoDetallePage';
-import MiMesaPage from './pages/personero/MiMesaPage';
-import CargarResultadoPage from './pages/personero/CargarResultadoPage';
-import EstadoResultadoPage from './pages/personero/EstadoResultadoPage';
+const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
+
+const AdminLayout = lazy(() => import('./components/layout/AdminLayout'));
+const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
+const UsuariosPage = lazy(() => import('./pages/admin/UsuariosPage'));
+const LocalesPage = lazy(() => import('./pages/admin/LocalesPage'));
+const MesasPage = lazy(() => import('./pages/admin/MesasPage'));
+const CandidatosPage = lazy(() => import('./pages/admin/CandidatosPage'));
+const AsignacionesPage = lazy(() => import('./pages/admin/AsignacionesPage'));
+const ResultadosAdminPage = lazy(() => import('./pages/admin/ResultadosAdminPage'));
+const AuditoriaPage = lazy(() => import('./pages/admin/AuditoriaPage'));
+
+const CoordinadorLayout = lazy(() => import('./components/layout/CoordinadorLayout'));
+const MisLocalesPage = lazy(() => import('./pages/coordinador/MisLocalesPage'));
+const MesasLocalPage = lazy(() => import('./pages/coordinador/MesasLocalPage'));
+const ResultadoDetallePage = lazy(() => import('./pages/coordinador/ResultadoDetallePage'));
+const PersonerosSupervisadosPage = lazy(() => import('./pages/coordinador/PersonerosSupervisadosPage'));
+
+const PersoneroLayout = lazy(() => import('./components/layout/PersoneroLayout'));
+const MiMesaPage = lazy(() => import('./pages/personero/MiMesaPage'));
+const CargarResultadoPage = lazy(() => import('./pages/personero/CargarResultadoPage'));
+const EstadoResultadoPage = lazy(() => import('./pages/personero/EstadoResultadoPage'));
+
+const Cargando = () => (
+  <div className="flex items-center justify-center min-h-screen">
+    <Spinner />
+  </div>
+);
 
 const RootRedirect = () => {
   const { user, loading } = useAuth();
-  if (loading) return null;
+  if (loading) return <Cargando />;
   if (!user) return <Navigate to="/login" replace />;
   if (user.rol === 'admin') return <Navigate to="/admin/dashboard" replace />;
   if (user.rol === 'coordinador') return <Navigate to="/coordinador/mis-locales" replace />;
@@ -37,14 +53,8 @@ const RootRedirect = () => {
 };
 
 const router = createBrowserRouter([
-  {
-    path: '/',
-    element: <RootRedirect />,
-  },
-  {
-    path: '/login',
-    element: <LoginPage />,
-  },
+  { path: '/', element: <RootRedirect /> },
+  { path: '/login', element: <LoginPage /> },
   {
     path: '/admin',
     element: (
@@ -61,7 +71,7 @@ const router = createBrowserRouter([
       { path: 'asignaciones', element: <AsignacionesPage /> },
       { path: 'resultados', element: <ResultadosAdminPage /> },
       { path: 'auditoria', element: <AuditoriaPage /> },
-      { path: '', element: <Navigate to="/admin/dashboard" replace /> }
+      { path: '', element: <Navigate to="/admin/dashboard" replace /> },
     ],
   },
   {
@@ -75,7 +85,8 @@ const router = createBrowserRouter([
       { path: 'mis-locales', element: <MisLocalesPage /> },
       { path: 'mesas/:localId', element: <MesasLocalPage /> },
       { path: 'resultado/:id', element: <ResultadoDetallePage /> },
-      { path: '', element: <Navigate to="/coordinador/mis-locales" replace /> }
+      { path: 'personeros', element: <PersonerosSupervisadosPage /> },
+      { path: '', element: <Navigate to="/coordinador/mis-locales" replace /> },
     ],
   },
   {
@@ -89,19 +100,20 @@ const router = createBrowserRouter([
       { path: 'mi-mesa', element: <MiMesaPage /> },
       { path: 'cargar-resultado', element: <CargarResultadoPage /> },
       { path: 'estado', element: <EstadoResultadoPage /> },
-      { path: '', element: <Navigate to="/personero/mi-mesa" replace /> }
+      { path: '', element: <Navigate to="/personero/mi-mesa" replace /> },
     ],
-  }
+  },
+  { path: '*', element: <Navigate to="/" replace /> },
 ]);
 
-const App = () => {
-  return (
-    <AuthProvider>
-      <SocketProvider>
+const App = () => (
+  <AuthProvider>
+    <SocketProvider>
+      <Suspense fallback={<Cargando />}>
         <RouterProvider router={router} />
-      </SocketProvider>
-    </AuthProvider>
-  );
-};
+      </Suspense>
+    </SocketProvider>
+  </AuthProvider>
+);
 
 export default App;

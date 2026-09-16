@@ -58,7 +58,7 @@ export const remove = async (req, res) => {
     const oldData = await db('distritos').where({ id }).first();
     if (!oldData) return res.status(404).json({ success: false, message: 'Distrito no encontrado' });
     
-    const count = await db('locales').where({ distrito_id: id }).count('id as c').first();
+    const count = await db('locales_votacion as locales').where({ distrito_id: id }).count('id as c').first();
     if (parseInt(count.c) > 0) {
       return res.status(400).json({ success: false, message: 'Distrito tiene locales asociados' });
     }

@@ -1,108 +1,275 @@
 import db from '../config/database.js';
+import { cacheWrap } from '../services/cache.service.js';
+
+/**
+ * Dashboard en tiempo real.
+ *
+ * Correcciones respecto a la version anterior:
+ *  - Consultaba las tablas "mesas" y "locales", que no existen (el esquema
+ *    real usa mesas_sufragio y locales_votacion). Dependia de un script
+ *    manual que creaba vistas; si no se ejecutaba, el dashboard fallaba.
+ *  - Los reportes por distrito y por local devolvian [] siempre.
+ *  - La auditoria ordenaba por "created_at", columna que no existe (es "fecha").
+ *  - Cada refresco lanzaba 6 agregaciones sin cache.
+ */
+
+const TTL = Number(process.env.CACHE_TTL_SECONDS || 5);
+const num = (v) => Number(v || 0);
 
 export const getResumen = async (req, res) => {
   try {
-    const total_mesas = await db('mesas').count('id as c').first();
-    const mesas_estados = await db('mesas').select('estado').count('id as c').groupBy('estado');
-    const total_personeros = await db('usuarios').where({ rol: 'personero', activo: true }).count('id as c').first();
-    const personeros_asig = await db('asignacion_personeros').where({ activo: true }).count('id as c').first();
-    const total_locales = await db('locales').count('id as c').first();
-    const total_votos = await db('resultados_mesa').where({ estado: 'verificado' }).sum('total_votos_emitidos as s').first();
-    
-    const dict = mesas_estados.reduce((acc, curr) => { acc[curr.estado] = parseInt(curr.c); return acc; }, {});
-    const verif = dict['verificada'] || 0;
-    const tot_m = parseInt(total_mesas.c);
-    
-    res.json({
-      success: true,
-      data: {
-        total_mesas: tot_m,
-        mesas_pendientes: dict['pendiente'] || 0,
-        mesas_reportadas: dict['reportada'] || 0,
-        mesas_verificadas: verif,
-        mesas_observadas: dict['observada'] || 0,
-        total_personeros: parseInt(total_personeros.c),
-        personeros_asignados: parseInt(personeros_asig.c),
-        personeros_sin_asignar: parseInt(total_personeros.c) - parseInt(personeros_asig.c),
-        total_locales: parseInt(total_locales.c),
-        porcentaje_avance: tot_m ? (verif / tot_m) * 100 : 0,
-        total_votos_contados: parseInt(total_votos.s || 0)
-      }
+    const data = await cacheWrap('dashboard:resumen', TTL, async () => {
+      const [
+        totalMesas, estadosMesa, totalPersoneros, personerosAsignados,
+        totalLocales, totalCoordinadores, votos,
+      ] = await Promise.all([
+        db('mesas_sufragio').count('id as c').first(),
+        db('mesas_sufragio').select('estado').count('id as c').groupBy('estado'),
+        db('usuarios').where({ rol: 'personero', activo: true }).count('id as c').first(),
+        db('asignacion_personeros').where({ activo: true }).count('id as c').first(),
+        db('locales_votacion').count('id as c').first(),
+        db('usuarios').where({ rol: 'coordinador', activo: true }).count('id as c').first(),
+        db('resultados_mesa').where({ estado: 'verificado' })
+          .sum('total_votos_emitidos as s').first(),
+      ]);
+
+      const porEstado = estadosMesa.reduce((acc, row) => {
+        acc[row.estado] = num(row.c);
+        return acc;
+      }, {});
+
+      const total = num(totalMesas.c);
+      const verificadas = porEstado.verificada || 0;
+      const reportadas = porEstado.reportada || 0;
+      const personeros = num(totalPersoneros.c);
+      const asignados = num(personerosAsignados.c);
+
+      return {
+        total_mesas: total,
+        mesas_pendientes: porEstado.pendiente || 0,
+        mesas_reportadas: reportadas,
+        mesas_verificadas: verificadas,
+        mesas_observadas: porEstado.observada || 0,
+        total_personeros: personeros,
+        personeros_asignados: asignados,
+        personeros_sin_asignar: Math.max(personeros - asignados, 0),
+        total_coordinadores: num(totalCoordinadores.c),
+        total_locales: num(totalLocales.c),
+        porcentaje_avance: total ? Number(((verificadas / total) * 100).toFixed(2)) : 0,
+        porcentaje_procesado: total ? Number((((verificadas + reportadas) / total) * 100).toFixed(2)) : 0,
+        total_votos_contados: num(votos.s),
+        actualizado_en: new Date().toISOString(),
+      };
     });
+
+    res.json({ success: true, data, message: 'Resumen obtenido' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error', error: error.message });
+    res.status(500).json({ success: false, message: 'Error obteniendo resumen', error: error.message });
   }
 };
 
 export const getResultadosPorCandidato = async (req, res) => {
   try {
-    const { distrito_id } = req.query;
-    let query = db('detalle_resultados')
-      .join('resultados_mesa', 'detalle_resultados.resultado_id', 'resultados_mesa.id')
-      .join('mesas', 'resultados_mesa.mesa_id', 'mesas.id')
-      .join('locales', 'mesas.local_id', 'locales.id')
-      .join('candidatos', 'detalle_resultados.candidato_id', 'candidatos.id')
-      .where('resultados_mesa.estado', 'verificado')
-      .select('candidatos.id', 'candidatos.nombre_completo', 'candidatos.organizacion_politica')
-      .sum('detalle_resultados.votos as total_votos')
-      .groupBy('candidatos.id');
+    const { distrito_id, local_id } = req.query;
+    const clave = `dashboard:candidatos:${distrito_id || 'all'}:${local_id || 'all'}`;
 
-    if (distrito_id) query = query.where('locales.distrito_id', distrito_id);
-    
-    const results = await query.orderBy('total_votos', 'desc');
-    const total = results.reduce((acc, curr) => acc + parseInt(curr.total_votos), 0);
-    
-    const data = results.map(r => ({
-      ...r,
-      total_votos: parseInt(r.total_votos),
-      porcentaje: total ? (parseInt(r.total_votos) / total) * 100 : 0
-    }));
-    
-    res.json({ success: true, data });
+    const data = await cacheWrap(clave, TTL, async () => {
+      let query = db('detalle_resultados as dr')
+        .join('resultados_mesa as rm', 'dr.resultado_id', 'rm.id')
+        .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
+        .join('locales_votacion as l', 'm.local_id', 'l.id')
+        .join('candidatos as c', 'dr.candidato_id', 'c.id')
+        .where('rm.estado', 'verificado')
+        .select('c.id', 'c.nombre_completo', 'c.organizacion_politica', 'c.siglas', 'c.numero_lista')
+        .sum('dr.votos as total_votos')
+        .groupBy('c.id', 'c.nombre_completo', 'c.organizacion_politica', 'c.siglas', 'c.numero_lista');
+
+      if (distrito_id) query = query.where('l.distrito_id', distrito_id);
+      if (local_id) query = query.where('m.local_id', local_id);
+
+      const filas = await query.orderBy('total_votos', 'desc');
+      const total = filas.reduce((acc, f) => acc + num(f.total_votos), 0);
+
+      return filas.map((f) => ({
+        ...f,
+        total_votos: num(f.total_votos),
+        porcentaje: total ? Number(((num(f.total_votos) / total) * 100).toFixed(2)) : 0,
+      }));
+    });
+
+    res.json({ success: true, data, message: 'Resultados por candidato' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error', error: error.message });
+    res.status(500).json({ success: false, message: 'Error obteniendo resultados', error: error.message });
   }
 };
 
 export const getResultadosPorDistrito = async (req, res) => {
   try {
-    res.json({ success: true, data: [] }); // Simplification due to complexity
+    const data = await cacheWrap('dashboard:distritos', TTL, async () => {
+      const filas = await db('distritos as d')
+        .leftJoin('locales_votacion as l', 'l.distrito_id', 'd.id')
+        .leftJoin('mesas_sufragio as m', 'm.local_id', 'l.id')
+        .leftJoin('resultados_mesa as rm', function () {
+          this.on('rm.mesa_id', '=', 'm.id').andOn('rm.estado', '=', db.raw('?', ['verificado']));
+        })
+        .select('d.id', 'd.nombre', 'd.codigo')
+        .count('m.id as total_mesas')
+        .countDistinct('l.id as total_locales')
+        .sum('rm.total_votos_emitidos as votos_contados')
+        .groupBy('d.id', 'd.nombre', 'd.codigo')
+        .orderBy('d.nombre', 'asc');
+
+      const verificadasPorDistrito = await db('mesas_sufragio as m')
+        .join('locales_votacion as l', 'm.local_id', 'l.id')
+        .where('m.estado', 'verificada')
+        .select('l.distrito_id')
+        .count('m.id as c')
+        .groupBy('l.distrito_id');
+
+      const mapaVerif = verificadasPorDistrito.reduce((acc, r) => {
+        acc[r.distrito_id] = num(r.c);
+        return acc;
+      }, {});
+
+      return filas.map((f) => {
+        const totalMesas = num(f.total_mesas);
+        const verificadas = mapaVerif[f.id] || 0;
+        return {
+          id: f.id,
+          nombre: f.nombre,
+          codigo: f.codigo,
+          total_locales: num(f.total_locales),
+          total_mesas: totalMesas,
+          mesas_verificadas: verificadas,
+          votos_contados: num(f.votos_contados),
+          porcentaje_avance: totalMesas ? Number(((verificadas / totalMesas) * 100).toFixed(2)) : 0,
+        };
+      });
+    });
+
+    res.json({ success: true, data, message: 'Resultados por distrito' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error', error: error.message });
+    res.status(500).json({ success: false, message: 'Error obteniendo distritos', error: error.message });
   }
 };
 
 export const getResultadosPorLocal = async (req, res) => {
   try {
-    res.json({ success: true, data: [] }); // Simplification due to complexity
+    const { distrito_id } = req.query;
+    const clave = `dashboard:locales:${distrito_id || 'all'}`;
+
+    const data = await cacheWrap(clave, TTL, async () => {
+      let base = db('locales_votacion as l')
+        .join('distritos as d', 'l.distrito_id', 'd.id')
+        .leftJoin('mesas_sufragio as m', 'm.local_id', 'l.id')
+        .select('l.id', 'l.nombre', 'l.direccion', 'd.nombre as distrito_nombre')
+        .count('m.id as total_mesas')
+        .groupBy('l.id', 'l.nombre', 'l.direccion', 'd.nombre')
+        .orderBy('l.nombre', 'asc');
+
+      if (distrito_id) base = base.where('l.distrito_id', distrito_id);
+
+      const locales = await base;
+
+      const porEstado = await db('mesas_sufragio as m')
+        .select('m.local_id', 'm.estado')
+        .count('m.id as c')
+        .groupBy('m.local_id', 'm.estado');
+
+      const mapa = porEstado.reduce((acc, r) => {
+        acc[r.local_id] = acc[r.local_id] || {};
+        acc[r.local_id][r.estado] = num(r.c);
+        return acc;
+      }, {});
+
+      return locales.map((l) => {
+        const estados = mapa[l.id] || {};
+        const totalMesas = num(l.total_mesas);
+        const verificadas = estados.verificada || 0;
+        return {
+          ...l,
+          total_mesas: totalMesas,
+          mesas_pendientes: estados.pendiente || 0,
+          mesas_reportadas: estados.reportada || 0,
+          mesas_verificadas: verificadas,
+          mesas_observadas: estados.observada || 0,
+          porcentaje_avance: totalMesas ? Number(((verificadas / totalMesas) * 100).toFixed(2)) : 0,
+        };
+      });
+    });
+
+    res.json({ success: true, data, message: 'Resultados por local' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error', error: error.message });
+    res.status(500).json({ success: false, message: 'Error obteniendo locales', error: error.message });
   }
 };
 
 export const getMesasPendientes = async (req, res) => {
   try {
-    const { distrito_id, local_id } = req.query;
-    let query = db('mesas')
-      .join('locales', 'mesas.local_id', 'locales.id')
-      .where('mesas.estado', 'pendiente')
-      .select('mesas.*', 'locales.nombre as local_nombre');
-      
-    if (distrito_id) query = query.where('locales.distrito_id', distrito_id);
-    if (local_id) query = query.where('mesas.local_id', local_id);
-    
+    const { distrito_id, local_id, limit = 200 } = req.query;
+
+    let query = db('mesas_sufragio as m')
+      .join('locales_votacion as l', 'm.local_id', 'l.id')
+      .join('distritos as d', 'l.distrito_id', 'd.id')
+      .leftJoin('asignacion_personeros as ap', function () {
+        this.on('ap.mesa_id', '=', 'm.id').andOn('ap.activo', '=', db.raw('true'));
+      })
+      .leftJoin('usuarios as u', 'ap.usuario_id', 'u.id')
+      .where('m.estado', 'pendiente')
+      .select(
+        'm.id', 'm.numero_mesa', 'm.estado', 'm.total_electores_habiles',
+        'l.id as local_id', 'l.nombre as local_nombre',
+        'd.nombre as distrito_nombre',
+        'u.dni as personero_dni',
+        db.raw("CONCAT(u.nombres, ' ', u.apellidos) as personero_nombre"),
+        'u.telefono as personero_telefono'
+      )
+      .orderBy('m.numero_mesa', 'asc')
+      .limit(Number(limit) || 200);
+
+    if (distrito_id) query = query.where('l.distrito_id', distrito_id);
+    if (local_id) query = query.where('m.local_id', local_id);
+
     const mesas = await query;
-    res.json({ success: true, data: mesas });
+    res.json({ success: true, data: mesas, message: 'Mesas pendientes' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error', error: error.message });
+    res.status(500).json({ success: false, message: 'Error obteniendo mesas pendientes', error: error.message });
   }
 };
 
 export const getAuditoria = async (req, res) => {
   try {
-    const list = await db('auditoria').orderBy('created_at', 'desc').limit(100);
-    res.json({ success: true, data: list });
+    const { page = 1, limit = 50, tabla, usuario_id } = req.query;
+    const parsedLimit = Math.min(Number(limit) || 50, 200);
+    const parsedPage = Math.max(Number(page) || 1, 1);
+
+    let query = db('auditoria as a')
+      .leftJoin('usuarios as u', 'a.usuario_id', 'u.id')
+      .select(
+        'a.*',
+        'u.dni as usuario_dni',
+        db.raw("CONCAT(u.nombres, ' ', u.apellidos) as usuario_nombre")
+      );
+
+    if (tabla) query = query.where('a.tabla_afectada', tabla);
+    if (usuario_id) query = query.where('a.usuario_id', usuario_id);
+
+    const totalQuery = query.clone().clearSelect().clearOrder().count('* as total').first();
+
+    const [totalRes, registros] = await Promise.all([
+      totalQuery,
+      query.orderBy('a.fecha', 'desc')
+        .limit(parsedLimit)
+        .offset((parsedPage - 1) * parsedLimit),
+    ]);
+
+    res.json({
+      success: true,
+      data: registros,
+      meta: { total: num(totalRes.total), page: parsedPage, limit: parsedLimit },
+      message: 'Auditoria obtenida',
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error', error: error.message });
+    res.status(500).json({ success: false, message: 'Error obteniendo auditoria', error: error.message });
   }
 };
