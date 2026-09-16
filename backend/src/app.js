@@ -22,6 +22,8 @@ import asignacionesRoutes from './routes/asignaciones.routes.js';
 import resultadosRoutes from './routes/resultados.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import coordinadorRoutes from './routes/coordinador.routes.js';
+import path from 'path';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -94,6 +96,28 @@ const apiLimiter = rateLimit({
 app.use('/api/', apiLimiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/resultados', escrituraLimiter);
+
+// ── Archivos Estáticos (Fotos de Actas) ──
+const uploadsPathCandidates = [
+  process.env.STORAGE_LOCAL_PATH,
+  process.platform === 'win32' ? 'C:/app/uploads' : '/app/uploads',
+  path.resolve(process.cwd(), 'uploads'),
+  path.resolve(process.cwd(), '../uploads'),
+].filter(Boolean);
+
+uploadsPathCandidates.forEach((dir) => {
+  try {
+    if (fs.existsSync(dir)) {
+      app.use('/actas', express.static(path.join(dir, 'actas')));
+      app.use('/actas', express.static(dir));
+      app.use('/actas/actas', express.static(path.join(dir, 'actas')));
+      app.use('/actas/actas', express.static(dir));
+      app.use('/uploads', express.static(dir));
+    }
+  } catch (e) {
+    // Ignorar si el path no existe
+  }
+});
 
 // ── Health checks ──
 // /api/health: ligero, lo consulta Nginx en cada request fallida.

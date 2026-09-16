@@ -83,24 +83,54 @@ const MiMesaPage = () => {
           </div>
         </div>
 
-        <div className="pt-4 border-t border-gray-100">
-          {mesa.estado === 'pendiente' || !resultado ? (
+        <div className="pt-4 border-t border-gray-100 space-y-3">
+          {(mesa.estado === 'observada' || resultado?.estado === 'observado') ? (
+            <>
+              <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-left space-y-1">
+                <p className="font-extrabold text-red-900 text-xs flex items-center gap-1.5">
+                  <AlertCircle size={15} className="text-red-600" />
+                  Acta Observada por el Coordinador:
+                </p>
+                <p className="text-xs text-red-700 font-medium">
+                  {resultado?.observaciones_coordinador || 'Por favor revise y corrija las cantidades ingresadas.'}
+                </p>
+              </div>
+              <Button 
+                size="lg" 
+                variant="danger"
+                className="w-full text-base font-black py-3.5 shadow-md"
+                onClick={() => navigate('/personero/cargar-resultado')}
+              >
+                ✏️ Corregir y Reenviar Acta
+              </Button>
+            </>
+          ) : (mesa.estado === 'pendiente' && !resultado) ? (
             <Button 
               size="lg" 
-              className="w-full text-base font-bold py-3.5 shadow-lg"
+              className="w-full text-base font-black py-3.5 shadow-lg"
               onClick={() => navigate('/personero/cargar-resultado')}
             >
               📸 Cargar Resultados de Acta
             </Button>
           ) : (
-            <Button 
-              size="lg" 
-              variant="secondary"
-              className="w-full text-base font-bold py-3.5 shadow-sm"
-              onClick={() => navigate('/personero/estado')}
-            >
-              Ver Estado de Transmisión
-            </Button>
+            <div className="space-y-2">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-center">
+                <p className="text-xs font-bold text-amber-900">
+                  {mesa.estado === 'verificada' ? '✅ Acta verificada oficialmente' : '⏳ Acta transmitida — En espera de validación'}
+                </p>
+                <p className="text-[11px] text-amber-700 mt-0.5">
+                  No se permite volver a enviar datos mientras esté en revisión o haya sido aprobada.
+                </p>
+              </div>
+              <Button 
+                size="lg" 
+                variant="secondary"
+                className="w-full text-base font-bold py-3.5 shadow-sm"
+                onClick={() => navigate('/personero/estado')}
+              >
+                Ver Estado de Transmisión
+              </Button>
+            </div>
           )}
         </div>
       </Card>

@@ -117,6 +117,10 @@ export const subirResultado = async (req, res) => {
       .orderBy('subido_en', 'desc')
       .first();
 
+    if (anterior && anterior.estado !== 'observado') {
+      throw new ErrorNegocio(400, 'El acta de esta mesa ya fue transmitida y no puede modificarse mientras esté en revisión o haya sido aprobada. Solo se permite corregir si fue observada/declinada por el coordinador.');
+    }
+
     // ── Subida de la foto (ya validado todo lo demas) ──
     let fotoUrl = anterior?.foto_acta_url || null;
     if (req.file) {
@@ -202,6 +206,10 @@ export const corregirResultado = async (req, res) => {
     const resultado = await db('resultados_mesa').where({ id: req.params.id }).first();
     if (!resultado) throw new ErrorNegocio(404, 'Resultado no encontrado');
 
+    if (resultado.estado !== 'observado') {
+      throw new ErrorNegocio(400, 'Solo se pueden corregir actas que hayan sido observadas/declinadas por el coordinador');
+    }
+
     const asignacion = await db('asignacion_personeros')
       .where({ usuario_id: req.user.id, mesa_id: resultado.mesa_id, activo: true })
       .first();
@@ -220,8 +228,8 @@ export const verificarResultado = async (req, res) => {
 
     const resultado = await db('resultados_mesa').where({ id }).first();
     if (!resultado) throw new ErrorNegocio(404, 'Resultado no encontrado');
-    if (resultado.estado !== 'pendiente') {
-      throw new ErrorNegocio(400, `El acta ya fue procesada (estado: ${resultado.estado})`);
+    if (resultado.estado === 'verificado') {
+      throw new ErrorNegocio(400, 'El acta ya fue verificada previamente');
     }
 
     const mesa = await db('mesas_sufragio').where({ id: resultado.mesa_id }).first();
@@ -258,15 +266,15 @@ export const verificarResultado = async (req, res) => {
 
     await invalidateDashboard();
 
-    notifyAdmin('resultado:verificado', { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa });
-    notifyCoordinator(mesa.local_id, 'resultado:verificado', { mesa_id: mesa.id });
+    notifyAdmin('resultado:verificado', { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id });
+    notifyCoordinator(mesa.local_id, 'resultado:verificado', { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id });
     if (resultado.personero_id) {
       notifyPersonero(resultado.personero_id, 'resultado:verificado', {
-        mesa_id: mesa.id, numero_mesa: mesa.numero_mesa,
+        mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id,
       });
     }
 
-    res.json({ success: true, message: 'Acta verificada correctamente' });
+    res.json({ success: true, message: 'Acta verificada y aprobada correctamente' });
   } catch (error) {
     responderError(res, error, 'Error verificando el acta');
   }
@@ -283,8 +291,8 @@ export const observarResultado = async (req, res) => {
 
     const resultado = await db('resultados_mesa').where({ id }).first();
     if (!resultado) throw new ErrorNegocio(404, 'Resultado no encontrado');
-    if (resultado.estado !== 'pendiente') {
-      throw new ErrorNegocio(400, `El acta ya fue procesada (estado: ${resultado.estado})`);
+    if (resultado.estado === 'observado') {
+      throw new ErrorNegocio(400, 'El acta ya se encuentra en estado observado');
     }
 
     const mesa = await db('mesas_sufragio').where({ id: resultado.mesa_id }).first();
@@ -297,10 +305,12 @@ export const observarResultado = async (req, res) => {
       if (!asignado) throw new ErrorNegocio(403, 'No tiene permisos sobre este local');
     }
 
+    const motivoTexto = String(observaciones_coordinador).trim();
+
     await db.transaction(async (trx) => {
       await trx('resultados_mesa').where({ id }).update({
         estado: 'observado',
-        observaciones_coordinador,
+        observaciones_coordinador: motivoTexto,
         updated_at: trx.fn.now(),
       });
       await trx('mesas_sufragio').where({ id: mesa.id })
@@ -313,23 +323,25 @@ export const observarResultado = async (req, res) => {
       accion: 'UPDATE',
       usuarioId: req.user.id,
       datosAnteriores: resultado,
-      datosNuevos: { estado: 'observado', observaciones_coordinador },
+      datosNuevos: { estado: 'observado', observaciones_coordinador: motivoTexto },
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });
 
     await invalidateDashboard();
 
-    notifyAdmin('resultado:observado', { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa });
+    notifyAdmin('resultado:observado', { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id, motivo: motivoTexto });
+    notifyCoordinator(mesa.local_id, 'resultado:observado', { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id, motivo: motivoTexto });
     if (resultado.personero_id) {
       notifyPersonero(resultado.personero_id, 'resultado:observado', {
         mesa_id: mesa.id,
         numero_mesa: mesa.numero_mesa,
-        motivo: observaciones_coordinador,
+        resultado_id: id,
+        motivo: motivoTexto,
       });
     }
 
-    res.json({ success: true, message: 'Acta observada. El personero fue notificado.' });
+    res.json({ success: true, message: 'Acta declinada/observada. El personero fue notificado para corregirla.' });
   } catch (error) {
     responderError(res, error, 'Error observando el acta');
   }
@@ -384,6 +396,7 @@ export const getResultadoDetalle = async (req, res) => {
         'rm.*',
         'm.numero_mesa',
         'm.local_id',
+        'm.estado as estado_mesa',
         'm.total_electores_habiles',
         'm.total_electores_habiles as electores_habiles',
         'rm.total_votos_emitidos as total_votos',

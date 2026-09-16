@@ -32,9 +32,11 @@ if (pedido === 'supabase') {
   }
 }
 
+const defaultLocalPath = process.platform === 'win32' ? 'C:/app/uploads' : '/app/uploads';
+
 export const storageConfig = {
   driver,
-  localPath: process.env.STORAGE_LOCAL_PATH || '/app/uploads',
+  localPath: process.env.STORAGE_LOCAL_PATH || defaultLocalPath,
   publicUrl: process.env.STORAGE_PUBLIC_URL || '/actas',
 };
 

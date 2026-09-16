@@ -49,6 +49,10 @@ export async function uploadActaImage(buffer, mimeType, mesaNumero) {
 export async function getActaUrl(rutaRelativa) {
   if (!rutaRelativa) return null;
 
+  if (String(rutaRelativa).startsWith('http://') || String(rutaRelativa).startsWith('https://')) {
+    return rutaRelativa;
+  }
+
   if (storageConfig.driver === 'supabase' && supabase) {
     const { data, error } = await supabase.storage
       .from(bucketName)
@@ -60,7 +64,9 @@ export async function getActaUrl(rutaRelativa) {
     return data.signedUrl;
   }
 
-  return `${storageConfig.publicUrl}/${rutaRelativa}`.replace(/\/{2,}/g, '/');
+  const cleanPath = String(rutaRelativa).replace(/^\/?actas\//, '').replace(/^\//, '');
+  const baseUrl = (storageConfig.publicUrl || '/actas').replace(/\/+$/, '');
+  return `${baseUrl}/${cleanPath}`;
 }
 
 export async function deleteActaImage(rutaRelativa) {

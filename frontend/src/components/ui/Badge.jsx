@@ -18,8 +18,8 @@ const Badge = ({ variant = 'gray', children, className = '' }) => {
   
   if (statusStr === 'pendiente') finalVariant = 'gray';
   else if (statusStr === 'reportada') finalVariant = 'yellow';
-  else if (statusStr === 'verificada') finalVariant = 'green';
-  else if (statusStr === 'observada') finalVariant = 'orange';
+  else if (statusStr === 'verificada' || statusStr === 'verificado') finalVariant = 'green';
+  else if (statusStr === 'observada' || statusStr === 'observado') finalVariant = 'red';
 
   return (
     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${variants[finalVariant]} ${className}`}>

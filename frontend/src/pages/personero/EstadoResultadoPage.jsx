@@ -58,22 +58,26 @@ const EstadoResultadoPage = () => {
     );
   }
 
+  const estadoNorm = (resultado.estado || '').toLowerCase();
+  const esReportada = estadoNorm === 'reportada' || estadoNorm === 'pendiente';
+  const esVerificada = estadoNorm === 'verificada' || estadoNorm === 'verificado';
+  const esObservada = estadoNorm === 'observada' || estadoNorm === 'observado';
+
+  const rawPhoto = resultado.foto_acta_url_presigned || resultado.foto_acta_url;
+  const photoUrl = rawPhoto ? (rawPhoto.startsWith('http') || rawPhoto.startsWith('/') ? rawPhoto : `/${rawPhoto}`) : null;
+
   const renderEstadoIcon = () => {
-    switch(resultado.estado) {
-      case 'reportada': return <Send className="w-12 h-12 text-amber-500" />;
-      case 'verificada': return <CheckCircle className="w-12 h-12 text-emerald-500" />;
-      case 'observada': return <AlertTriangle className="w-12 h-12 text-red-600" />;
-      default: return <Clock className="w-12 h-12 text-gray-400" />;
-    }
+    if (esReportada) return <Send className="w-12 h-12 text-amber-500" />;
+    if (esVerificada) return <CheckCircle className="w-12 h-12 text-emerald-500" />;
+    if (esObservada) return <AlertTriangle className="w-12 h-12 text-red-600" />;
+    return <Clock className="w-12 h-12 text-gray-400" />;
   };
 
   const getEstadoColor = () => {
-    switch(resultado.estado) {
-      case 'reportada': return 'bg-amber-50 text-amber-800 border-amber-200';
-      case 'verificada': return 'bg-emerald-50 text-emerald-800 border-emerald-200';
-      case 'observada': return 'bg-red-50 text-red-800 border-red-200';
-      default: return 'bg-gray-50 text-gray-800 border-gray-200';
-    }
+    if (esReportada) return 'bg-amber-50 text-amber-800 border-amber-200';
+    if (esVerificada) return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+    if (esObservada) return 'bg-red-50 text-red-800 border-red-200';
+    return 'bg-gray-50 text-gray-800 border-gray-200';
   };
 
   return (
@@ -83,27 +87,41 @@ const EstadoResultadoPage = () => {
           {renderEstadoIcon()}
         </div>
         <p className="text-xs uppercase font-bold text-gray-500">Estado del Acta</p>
-        <h2 className="text-3xl font-black capitalize mb-2 text-gray-900">{resultado.estado}</h2>
+        <h2 className="text-3xl font-black capitalize mb-2 text-gray-900">
+          {esVerificada ? 'Verificada' : esObservada ? 'Observada' : 'Reportada (En Revisión)'}
+        </h2>
         
-        <div className={`mx-4 p-3 rounded-lg border text-sm font-medium ${getEstadoColor()}`}>
-          {resultado.estado === 'reportada' && 'Resultados transmitidos con éxito. En espera de revisión por el coordinador.'}
-          {resultado.estado === 'verificada' && '¡Acta validada y verificada oficialmente!'}
-          {resultado.estado === 'observada' && (
-            <div>
-              <p className="font-bold mb-1">Acta Observada:</p>
-              <p>{resultado.observaciones_coordinador || 'Por favor revise y corrija las cantidades ingresadas.'}</p>
+        <div className={`mx-4 p-3.5 rounded-xl border text-sm font-medium ${getEstadoColor()}`}>
+          {esReportada && 'Resultados transmitidos con éxito. En espera de revisión por el coordinador de su local.'}
+          {esVerificada && '¡Acta validada y verificada oficialmente! Cómputo registrado.'}
+          {esObservada && (
+            <div className="text-left space-y-1">
+              <p className="font-extrabold text-red-900 flex items-center gap-1">
+                <AlertTriangle size={16} /> Acta Declinada / Observada:
+              </p>
+              <p className="bg-white/80 p-2 rounded border border-red-200 text-xs">
+                {resultado.observaciones_coordinador || 'Por favor revise y corrija las cantidades ingresadas.'}
+              </p>
             </div>
           )}
         </div>
 
-        {resultado.estado === 'observada' && (
+        {esObservada && (
           <div className="mt-6 px-4">
-            <Button className="w-full" variant="danger" onClick={() => navigate('/personero/cargar-resultado')}>
-              Corregir y Reenviar Resultado
+            <Button className="w-full font-black py-3" variant="danger" onClick={() => navigate('/personero/cargar-resultado')}>
+              ✏️ Corregir y Reenviar Resultado
             </Button>
           </div>
         )}
       </Card>
+
+      {photoUrl && (
+        <Card title="Foto del Acta Transmitida">
+          <div className="border border-gray-200 rounded-lg overflow-hidden bg-gray-900 flex justify-center p-1">
+            <img src={photoUrl} alt="Acta transmitida" className="max-h-72 object-contain rounded" />
+          </div>
+        </Card>
+      )}
 
       <Card title="Resumen de Escrutinio">
         <div className="space-y-3 text-sm">
@@ -114,7 +132,7 @@ const EstadoResultadoPage = () => {
           <div className="flex justify-between border-b pb-2">
             <span className="text-gray-600">Fecha de Transmisión</span>
             <span className="font-medium text-gray-900">
-              {resultado.created_at ? new Date(resultado.created_at).toLocaleString() : 'Recién transmitido'}
+              {resultado.created_at || resultado.subido_en ? new Date(resultado.created_at || resultado.subido_en).toLocaleString() : 'Recién transmitido'}
             </span>
           </div>
           <div className="flex justify-between border-b pb-2">

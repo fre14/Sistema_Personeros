@@ -239,7 +239,7 @@ export const getMesasPendientes = async (req, res) => {
 
 export const getAuditoria = async (req, res) => {
   try {
-    const { page = 1, limit = 50, tabla, usuario_id } = req.query;
+    const { page = 1, limit = 50, tabla, usuario_id, q } = req.query;
     const parsedLimit = Math.min(Number(limit) || 50, 200);
     const parsedPage = Math.max(Number(page) || 1, 1);
 
@@ -247,26 +247,35 @@ export const getAuditoria = async (req, res) => {
       .leftJoin('usuarios as u', 'a.usuario_id', 'u.id')
       .select(
         'a.*',
+        'a.fecha as created_at',
         'u.dni as usuario_dni',
+        'u.rol as usuario_rol',
         db.raw("CONCAT(u.nombres, ' ', u.apellidos) as usuario_nombre")
       );
 
     if (tabla) query = query.where('a.tabla_afectada', tabla);
     if (usuario_id) query = query.where('a.usuario_id', usuario_id);
+    if (q && String(q).trim()) {
+      const term = `%${String(q).trim()}%`;
+      query = query.where(function() {
+        this.whereILike('a.tabla_afectada', term)
+          .orWhereILike('u.dni', term)
+          .orWhereILike('u.nombres', term)
+          .orWhereILike('u.apellidos', term)
+          .orWhereILike('a.ip_address', term);
+      });
+    }
 
-    const totalQuery = query.clone().clearSelect().clearOrder().count('* as total').first();
+    const totalRes = await query.clone().clearSelect().clearOrder().count('* as total').first();
 
-    const [totalRes, registros] = await Promise.all([
-      totalQuery,
-      query.orderBy('a.fecha', 'desc')
-        .limit(parsedLimit)
-        .offset((parsedPage - 1) * parsedLimit),
-    ]);
+    const registros = await query.orderBy('a.fecha', 'desc')
+      .limit(parsedLimit)
+      .offset((parsedPage - 1) * parsedLimit);
 
     res.json({
       success: true,
       data: registros,
-      meta: { total: num(totalRes.total), page: parsedPage, limit: parsedLimit },
+      meta: { total: num(totalRes?.total || 0), page: parsedPage, limit: parsedLimit },
       message: 'Auditoria obtenida',
     });
   } catch (error) {

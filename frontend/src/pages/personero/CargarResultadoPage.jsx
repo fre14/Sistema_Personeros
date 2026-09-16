@@ -14,6 +14,7 @@ const CargarResultadoPage = () => {
   const [step, setStep] = useState(1);
   const [candidatos, setCandidatos] = useState([]);
   const [mesaInfo, setMesaInfo] = useState(null);
+  const [resultadoExistente, setResultadoExistente] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [compressing, setCompressing] = useState(false);
@@ -41,16 +42,40 @@ const CargarResultadoPage = () => {
 
         const initialVotos = {};
         sorted.forEach(c => initialVotos[c.id] = '');
-        setVotos(initialVotos);
 
         // Fetch info de la mesa asignada al personero
         try {
           const resMesa = await api.get('/resultados/mi-mesa');
           const dataMesa = resMesa.data?.data || resMesa.data;
-          setMesaInfo(dataMesa?.mesa || dataMesa);
+          const mesa = dataMesa?.mesa || dataMesa;
+          const resObj = dataMesa?.resultado || null;
+          setMesaInfo(mesa);
+          setResultadoExistente(resObj);
+
+          if (resObj) {
+            // Precargar votos anteriores
+            if (resObj.detalles && Array.isArray(resObj.detalles)) {
+              resObj.detalles.forEach(d => {
+                initialVotos[d.candidato_id] = String(d.votos || 0);
+              });
+            }
+            if (resObj.votos_blanco !== undefined && resObj.votos_blanco !== null) setVotosBlanco(String(resObj.votos_blanco));
+            if (resObj.votos_nulo !== undefined && resObj.votos_nulo !== null) setVotosNulos(String(resObj.votos_nulo));
+            if (resObj.votos_impugnados !== undefined && resObj.votos_impugnados !== null) setVotosImpugnados(String(resObj.votos_impugnados));
+            if (resObj.total_cedulas_votacion) setTotalCedulas(String(resObj.total_cedulas_votacion));
+            if (resObj.observaciones_personero) setObservaciones(resObj.observaciones_personero);
+            
+            const rawPhoto = resObj.foto_acta_url_presigned || resObj.foto_acta_url;
+            if (rawPhoto) {
+              const cleanUrl = rawPhoto.startsWith('http') || rawPhoto.startsWith('/') ? rawPhoto : `/${rawPhoto}`;
+              setFotoPreview(cleanUrl);
+            }
+          }
         } catch (e) {
           console.warn('No se pudo obtener info de mesa:', e);
         }
+
+        setVotos(initialVotos);
       } catch (error) {
         console.error(error);
         toast.error('Error al cargar datos del formulario');
@@ -186,8 +211,54 @@ const CargarResultadoPage = () => {
 
   if (loading) return <div className="flex justify-center p-8"><Spinner text="Cargando datos de mesa..." /></div>;
 
+  const estadoMesa = (mesaInfo?.estado || '').toLowerCase();
+  const estadoRes = (resultadoExistente?.estado || '').toLowerCase();
+  const estaObservada = estadoMesa === 'observada' || estadoRes === 'observado' || estadoRes === 'observada';
+  const yaTransmitida = Boolean(resultadoExistente && (estadoRes === 'pendiente' || estadoRes === 'reportada' || estadoRes === 'verificado' || estadoRes === 'verificada' || estadoMesa === 'reportada' || estadoMesa === 'verificada'));
+  const bloqueado = yaTransmitida && !estaObservada;
+
+  if (bloqueado) {
+    return (
+      <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-2xl shadow-lg border border-gray-200 text-center space-y-4">
+        <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
+          <ShieldAlert size={36} />
+        </div>
+        <h2 className="text-2xl font-black text-gray-900">Acta Ya Transmitida</h2>
+        <p className="text-sm text-gray-600 leading-relaxed">
+          Los resultados y la fotografía de la <strong>Mesa {mesaInfo?.numero_mesa}</strong> ya fueron enviados con éxito y se encuentran en proceso de revisión por el coordinador de su local de votación (o ya han sido verificados).
+        </p>
+        <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 text-xs font-semibold text-amber-900 text-left">
+          ⚠️ Por estricta seguridad electoral, no es posible ingresar o alterar datos a menos que el coordinador de local observe o decline el acta.
+        </div>
+        <div className="pt-2 flex flex-col gap-2">
+          <Button size="lg" className="w-full font-bold" onClick={() => navigate('/personero/estado')}>
+            Ver Estado de Transmisión
+          </Button>
+          <Button size="lg" variant="secondary" className="w-full" onClick={() => navigate('/personero/mi-mesa')}>
+            Volver a Mi Mesa
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-lg mx-auto pb-12">
+      {estaObservada && (
+        <div className="mb-4 p-4 bg-red-50 border-2 border-red-300 rounded-xl text-left space-y-1.5 shadow-sm">
+          <div className="flex items-center gap-2 text-red-900 font-black text-sm">
+            <AlertTriangle size={18} className="text-red-600" />
+            Acta Observada por el Coordinador de Local
+          </div>
+          <p className="text-xs text-red-800 bg-white/85 p-2.5 rounded-lg border border-red-200 font-medium">
+            <strong>Motivo:</strong> {resultadoExistente?.observaciones_coordinador || 'Por favor revise y corrija los datos digitados.'}
+          </p>
+          <p className="text-xs text-red-700">
+            Hemos precargado sus datos anteriores. Modifique las cifras observadas o suba una nueva fotografía y transmita la corrección.
+          </p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center mb-4">
         {step > 1 && (
@@ -275,7 +346,7 @@ const CargarResultadoPage = () => {
             <Button
               className="w-full mt-4"
               onClick={() => setStep(2)}
-              disabled={!fotoFile}
+              disabled={!fotoFile && !fotoPreview}
             >
               Continuar al Registro de Votos →
             </Button>
