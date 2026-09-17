@@ -289,25 +289,33 @@ const ResultadosAdminPage = () => {
   // Si hay distrito seleccionado: Desglose por Locales de ese distrito
   const datosDesgloseTerritorial = useMemo(() => {
     if (filtroDistrito) {
-      return localesStats.map(l => ({
-        id: l.id,
-        nombre: l.nombre.length > 22 ? `${l.nombre.slice(0, 20)}...` : l.nombre,
-        nombreCompleto: l.nombre,
-        votos: Number(l.votos_contados || 0),
-        totalMesas: Number(l.total_mesas || 0),
-        mesasVerificadas: Number(l.mesas_verificadas || 0),
-        avance: Number(l.porcentaje_avance || 0),
-      })).sort((a, b) => b.votos - a.votos);
+      const lista = Array.isArray(localesStats) ? localesStats : [];
+      return lista.map(l => {
+        const nom = String(l?.nombre || 'Local');
+        return {
+          id: l?.id,
+          nombre: nom.length > 22 ? `${nom.slice(0, 20)}...` : nom,
+          nombreCompleto: nom,
+          votos: Number(l?.votos_contados || 0),
+          totalMesas: Number(l?.total_mesas || 0),
+          mesasVerificadas: Number(l?.mesas_verificadas || 0),
+          avance: Number(l?.porcentaje_avance || 0),
+        };
+      }).sort((a, b) => b.votos - a.votos);
     } else {
-      return distritosStats.map(d => ({
-        id: d.id,
-        nombre: d.nombre,
-        nombreCompleto: d.nombre,
-        votos: Number(d.votos_contados || 0),
-        totalMesas: Number(d.total_mesas || 0),
-        mesasVerificadas: Number(d.mesas_verificadas || 0),
-        avance: Number(d.porcentaje_avance || 0),
-      })).sort((a, b) => b.votos - a.votos);
+      const lista = Array.isArray(distritosStats) ? distritosStats : [];
+      return lista.map(d => {
+        const nom = String(d?.nombre || 'Distrito');
+        return {
+          id: d?.id,
+          nombre: nom,
+          nombreCompleto: nom,
+          votos: Number(d?.votos_contados || 0),
+          totalMesas: Number(d?.total_mesas || 0),
+          mesasVerificadas: Number(d?.mesas_verificadas || 0),
+          avance: Number(d?.porcentaje_avance || 0),
+        };
+      }).sort((a, b) => b.votos - a.votos);
     }
   }, [filtroDistrito, distritosStats, localesStats]);
 
@@ -1048,56 +1056,34 @@ const ResultadosAdminPage = () => {
           </div>
 
           {/* Tabla de Mesas */}
-          <Table
-            columns={[
-              {
-                header: 'N° Mesa',
-                accessor: 'numero_mesa',
-                cell: (row) => (
-                  <div>
-                    <span className="font-extrabold font-mono text-gray-900">{row.numero_mesa}</span>
-                    <span className="block text-[11px] text-gray-500">{row.total_electores_habiles || 300} electores</span>
-                  </div>
-                )
-              },
-              {
-                header: 'Distrito',
-                accessor: 'distrito_nombre',
-                cell: (row) => <span className="font-medium text-gray-800">{row.distrito_nombre}</span>
-              },
-              {
-                header: 'Local de Votación',
-                accessor: 'local_nombre',
-                cell: (row) => (
-                  <div>
-                    <p className="font-bold text-gray-800 text-xs">{row.local_nombre}</p>
-                    <p className="text-[11px] text-gray-500">{row.local_direccion}</p>
-                  </div>
-                )
-              },
-              {
-                header: 'Estado',
-                accessor: 'estado',
-                cell: (row) => <Badge variant={row.estado}>{row.estado}</Badge>
-              },
-              {
-                header: 'Personero',
-                accessor: 'personero_nombre',
-                cell: (row) => (
-                  row.personero_nombre ? (
+          <Table headers={['N° Mesa', 'Distrito', 'Local de Votación', 'Estado', 'Personero', 'Acciones']}>
+            {mesas.map((row) => (
+              <tr key={row.id} className="hover:bg-gray-50 transition-colors">
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <span className="font-extrabold font-mono text-gray-900">{row.numero_mesa}</span>
+                  <span className="block text-[11px] text-gray-500">{row.total_electores_habiles || 300} electores</span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800">
+                  {row.distrito_nombre}
+                </td>
+                <td className="px-6 py-4 text-sm">
+                  <p className="font-bold text-gray-800 text-xs">{row.local_nombre}</p>
+                  <p className="text-[11px] text-gray-500">{row.local_direccion}</p>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <Badge variant={row.estado}>{row.estado}</Badge>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {row.personero_nombre ? (
                     <div>
                       <p className="font-semibold text-xs text-gray-900">{row.personero_nombre}</p>
                       <p className="text-[11px] text-gray-500">DNI: {row.personero_dni}</p>
                     </div>
                   ) : (
                     <span className="text-xs text-gray-400 italic">Sin asignar</span>
-                  )
-                )
-              },
-              {
-                header: 'Acciones',
-                accessor: 'id',
-                cell: (row) => (
+                  )}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <Button
                     size="sm"
                     variant={row.estado === 'pendiente' ? 'secondary' : 'primary'}
@@ -1107,12 +1093,10 @@ const ResultadosAdminPage = () => {
                     <Eye size={13} />
                     Ver Detalle
                   </Button>
-                )
-              }
-            ]}
-            data={mesas}
-            loading={loading}
-          />
+                </td>
+              </tr>
+            ))}
+          </Table>
 
           {/* Paginación */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 pt-4 border-t border-gray-200">
