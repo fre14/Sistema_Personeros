@@ -4,10 +4,14 @@ import { useSocket } from '../../contexts/SocketContext';
 import StatCard from '../../components/ui/StatCard';
 import Card from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
-import { Inbox, CheckCircle, Clock, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Inbox, CheckCircle, Clock, AlertTriangle, RefreshCw, MapPin } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 
 const AdminDashboard = () => {
+  const [tipoEleccion, setTipoEleccion] = useState('provincial'); // 'provincial' | 'distrital'
+  const [distritos, setDistritos] = useState([]);
+  const [distritoSeleccionado, setDistritoSeleccionado] = useState('');
+
   const [stats, setStats] = useState({
     total_mesas: 0,
     mesas_pendientes: 0,
@@ -25,13 +29,35 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(false);
   const { socket } = useSocket();
 
+  useEffect(() => {
+    const fetchDistritos = async () => {
+      try {
+        const res = await get('/distritos');
+        const lista = res.data?.data || res.data || [];
+        const distritales = lista.filter(d => d.tiene_eleccion_distrital);
+        setDistritos(distritales);
+        if (distritales.length > 0 && !distritoSeleccionado) {
+          setDistritoSeleccionado(String(distritales[0].id));
+        }
+      } catch (error) {
+        console.error('Error cargando distritos:', error);
+      }
+    };
+    fetchDistritos();
+  }, []);
+
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
+      let params = `?tipo_eleccion=${tipoEleccion}`;
+      if (tipoEleccion === 'distrital' && distritoSeleccionado) {
+        params += `&distrito_id=${distritoSeleccionado}`;
+      }
+
       const [resumenRes, candidatosRes, pendientesRes] = await Promise.all([
-        get('/dashboard/resumen'),
-        get('/dashboard/por-candidato'),
-        get('/dashboard/mesas-pendientes')
+        get(`/dashboard/resumen${params}`),
+        get(`/dashboard/por-candidato${params}`),
+        get(`/dashboard/mesas-pendientes${params}`)
       ]);
 
       const dataResumen = resumenRes.data?.data || resumenRes.data || {};
@@ -67,7 +93,7 @@ const AdminDashboard = () => {
         socket.off('resultado:observado');
       };
     }
-  }, [socket]);
+  }, [socket, tipoEleccion, distritoSeleccionado]);
 
   const pieData = [
     { name: 'Verificadas', value: Number(stats.mesas_verificadas || 0), color: '#16a34a' },
@@ -78,27 +104,73 @@ const AdminDashboard = () => {
 
   const avance = Number(stats.porcentaje_avance || 0);
 
+  const nombreDistritoActual = tipoEleccion === 'distrital'
+    ? distritos.find(d => String(d.id) === String(distritoSeleccionado))?.nombre || 'Distrital'
+    : 'Provincia de Huamanga';
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      {/* Header with Title and Tabs */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Panel de Control Electoral</h1>
-          <p className="text-sm text-gray-500">Provincia de Huamanga • Monitoreo en Tiempo Real</p>
+          <p className="text-sm text-gray-500">{nombreDistritoActual} • Monitoreo en Tiempo Real</p>
         </div>
-        <button
-          onClick={fetchDashboardData}
-          disabled={loading}
-          className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
-        >
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin text-red-600' : 'text-gray-500'}`} />
-          Actualizar
-        </button>
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Tabs Provincial / Distrital */}
+          <div className="bg-gray-100 p-1 rounded-xl flex text-xs font-bold border border-gray-200">
+            <button
+              onClick={() => setTipoEleccion('provincial')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                tipoEleccion === 'provincial' ? 'bg-red-700 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              🏛️ Elección Provincial
+            </button>
+            <button
+              onClick={() => setTipoEleccion('distrital')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                tipoEleccion === 'distrital' ? 'bg-red-700 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              🏘️ Elecciones Distritales
+            </button>
+          </div>
+
+          {/* District selector if distrital */}
+          {tipoEleccion === 'distrital' && (
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-300 rounded-xl px-2 py-1">
+              <MapPin size={14} className="text-red-600" />
+              <select
+                value={distritoSeleccionado}
+                onChange={(e) => setDistritoSeleccionado(e.target.value)}
+                className="text-xs font-bold bg-transparent text-gray-800 focus:outline-none"
+              >
+                {distritos.map(d => (
+                  <option key={d.id} value={d.id}>{d.nombre}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <button
+            onClick={fetchDashboardData}
+            disabled={loading}
+            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin text-red-600' : 'text-gray-500'}`} />
+            Actualizar
+          </button>
+        </div>
       </div>
 
       {/* Progress Bar */}
       <Card>
         <div className="flex justify-between mb-2 items-center">
-          <span className="text-sm font-semibold text-gray-700">Avance Oficial de Cómputo (Mesas Verificadas)</span>
+          <span className="text-sm font-semibold text-gray-700">
+            Avance de Cómputo ({tipoEleccion === 'provincial' ? 'Actas Provinciales' : `Actas Distritales - ${nombreDistritoActual}`})
+          </span>
           <span className="text-base font-extrabold text-red-700">{avance.toFixed(2)}%</span>
         </div>
         <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
@@ -109,7 +181,7 @@ const AdminDashboard = () => {
         </div>
         <div className="mt-2 flex justify-between text-xs text-gray-500">
           <span>{stats.mesas_verificadas || 0} de {stats.total_mesas || 0} mesas computadas</span>
-          <span>{stats.total_votos_verificados || 0} votos procesados</span>
+          <span>{stats.total_votos_contados || stats.total_votos_verificados || 0} votos procesados</span>
         </div>
       </Card>
 
@@ -123,7 +195,7 @@ const AdminDashboard = () => {
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card title="Votos por Candidato (Cómputo Verificado)">
+        <Card title={`Votos por Candidato (${tipoEleccion === 'provincial' ? 'Alcaldía Provincial' : `Alcaldía Distrital - ${nombreDistritoActual}`})`}>
           <div className="h-80">
             {votosPorCandidato.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -171,7 +243,7 @@ const AdminDashboard = () => {
       </div>
 
       {/* Table Mesas Pendientes de Reporte */}
-      <Card title="Mesas Pendientes de Transmisión">
+      <Card title={`Mesas Pendientes de Transmisión (${tipoEleccion === 'provincial' ? 'Provincial' : `Distrital - ${nombreDistritoActual}`})`}>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">

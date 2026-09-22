@@ -22,6 +22,7 @@ import asignacionesRoutes from './routes/asignaciones.routes.js';
 import resultadosRoutes from './routes/resultados.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import coordinadorRoutes from './routes/coordinador.routes.js';
+import descargaRoutes from './routes/descarga.routes.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -149,6 +150,7 @@ app.use('/api/asignaciones', asignacionesRoutes);
 app.use('/api/resultados', resultadosRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/coordinador', coordinadorRoutes);
+app.use('/api/descargas', descargaRoutes);
 
 app.use('/api/*', (req, res) => {
   res.status(404).json({ success: false, message: 'Endpoint no encontrado' });

@@ -63,3 +63,31 @@ export async function deleteActaImage(rutaRelativa) {
     await fs.unlink(path.join(storageConfig.localPath, rutaRelativa));
   } catch {}
 }
+
+export async function getActaBuffer(rutaRelativa) {
+  if (!rutaRelativa) return null;
+  try {
+    if (storageConfig.driver === 'supabase' && supabase) {
+      const { data, error } = await supabase.storage.from(bucketName).download(rutaRelativa);
+      if (error || !data) return null;
+      const arrayBuffer = await data.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    }
+    const cleanPath = String(rutaRelativa).replace(/^\/?actas\//, '').replace(/^\//, '');
+    const candidatos = [
+      path.join(storageConfig.localPath, rutaRelativa),
+      path.join(storageConfig.localPath, cleanPath),
+      path.join(storageConfig.localPath, 'actas', cleanPath),
+    ];
+    for (const p of candidatos) {
+      try {
+        const buf = await fs.readFile(p);
+        if (buf) return buf;
+      } catch {}
+    }
+    return null;
+  } catch (err) {
+    console.error('Error obteniendo buffer de acta:', err.message);
+    return null;
+  }
+}

@@ -65,7 +65,6 @@ const MesasLocalPage = () => {
         </div>
       </div>
 
-      {/* Píldoras de filtro por estado */}
       <div className="flex gap-2 overflow-x-auto pb-2">
         {['todas', 'pendiente', 'reportada', 'verificada', 'observada'].map(estado => {
           const count = estado === 'todas' ? mesas.length : mesas.filter(m => m.estado === estado).length;
@@ -88,33 +87,37 @@ const MesasLocalPage = () => {
         })}
       </div>
 
-      {/* Tarjetas de Mesas y Personeros */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {mesasFiltradas.map((mesa) => {
-          const esClickeable = Boolean(mesa.resultado_id);
+          const esClickeable = Boolean(mesa.resultado_id || mesa.resultado_distrital_id);
 
           return (
             <Card 
               key={mesa.id}
               className={`transition-all ${
-                mesa.estado === 'reportada' ? 'border-amber-400 ring-2 ring-amber-200 cursor-pointer shadow-md' : 
-                esClickeable ? 'hover:border-red-300 cursor-pointer' : 'opacity-90'
+                mesa.estado === 'reportada' || mesa.estado_distrital === 'reportada' ? 'border-amber-400 ring-2 ring-amber-200 shadow-md' : 
+                esClickeable ? 'hover:border-red-300' : 'opacity-90'
               }`}
-              onClick={() => {
-                if (mesa.resultado_id) {
-                  navigate(`/coordinador/resultado/${mesa.resultado_id}`);
-                }
-              }}
             >
               <div className="flex justify-between items-start mb-2">
                 <span className="text-lg font-extrabold text-gray-900">Mesa {mesa.numero_mesa}</span>
-                <Badge variant={mesa.estado}>{mesa.estado}</Badge>
+                <div className="flex flex-col gap-1 items-end">
+                  <Badge variant={mesa.estado}>
+                    {localInfo?.tiene_distrital && <span className="font-bold mr-1">Prov:</span>}
+                    {mesa.estado}
+                  </Badge>
+                  {localInfo?.tiene_distrital && (
+                    <Badge variant={mesa.estado_distrital || 'pendiente'}>
+                      <span className="font-bold mr-1">Dist:</span>
+                      {mesa.estado_distrital || 'pendiente'}
+                    </Badge>
+                  )}
+                </div>
               </div>
 
               <div className="text-xs text-gray-600 space-y-1 mt-2">
                 <p><span className="font-semibold">Padrón:</span> {mesa.electores_habiles || 0} electores</p>
                 
-                {/* Personero Supervisado */}
                 <div className="pt-2 border-t border-gray-100">
                   <div className="flex items-center text-xs font-semibold text-gray-800">
                     <User size={13} className="mr-1 text-red-600" />
@@ -127,11 +130,7 @@ const MesasLocalPage = () => {
                       {mesa.personero_telefono && (
                         <p className="text-[11px] text-red-700 flex items-center font-medium">
                           <Phone size={11} className="mr-1" />
-                          <a 
-                            href={`tel:${mesa.personero_telefono}`} 
-                            onClick={(e) => e.stopPropagation()} 
-                            className="hover:underline"
-                          >
+                          <a href={`tel:${mesa.personero_telefono}`} className="hover:underline">
                             {mesa.personero_telefono}
                           </a>
                         </p>
@@ -143,24 +142,30 @@ const MesasLocalPage = () => {
                 </div>
               </div>
 
-              {mesa.estado === 'reportada' && (
-                <div className="mt-3 text-center text-xs font-bold text-amber-800 bg-amber-50 py-1.5 px-2 rounded border border-amber-200 flex items-center justify-center gap-1">
-                  <Clock size={13} />
-                  Revisar Acta Transmitida
-                </div>
-              )}
-              {mesa.estado === 'verificada' && mesa.resultado_id && (
-                <div className="mt-3 text-center text-xs font-semibold text-green-700 bg-green-50 py-1 px-2 rounded flex items-center justify-center gap-1">
-                  <CheckCircle2 size={13} />
-                  Acta Verificada
-                </div>
-              )}
-              {mesa.estado === 'observada' && mesa.resultado_id && (
-                <div className="mt-3 text-center text-xs font-semibold text-red-700 bg-red-50 py-1 px-2 rounded flex items-center justify-center gap-1">
-                  <AlertTriangle size={13} />
-                  Acta Observada
-                </div>
-              )}
+              <div className="mt-3 flex flex-col gap-2">
+                {mesa.resultado_id && (
+                  <Button 
+                    size="sm"
+                    variant={mesa.estado === 'reportada' ? 'warning' : 'secondary'}
+                    className="w-full text-xs flex items-center justify-center gap-1"
+                    onClick={() => navigate(`/coordinador/resultado/${mesa.resultado_id}`)}
+                  >
+                    {mesa.estado === 'reportada' ? <Clock size={13} /> : (mesa.estado === 'verificada' ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />)}
+                    Revisar Acta Provincial
+                  </Button>
+                )}
+                {localInfo?.tiene_distrital && mesa.resultado_distrital_id && (
+                  <Button 
+                    size="sm"
+                    variant={mesa.estado_distrital === 'reportada' ? 'warning' : 'secondary'}
+                    className="w-full text-xs flex items-center justify-center gap-1"
+                    onClick={() => navigate(`/coordinador/resultado/${mesa.resultado_distrital_id}`)}
+                  >
+                    {mesa.estado_distrital === 'reportada' ? <Clock size={13} /> : (mesa.estado_distrital === 'verificada' ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />)}
+                    Revisar Acta Distrital
+                  </Button>
+                )}
+              </div>
             </Card>
           );
         })}

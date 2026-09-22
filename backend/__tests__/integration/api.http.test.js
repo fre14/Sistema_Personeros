@@ -47,6 +47,7 @@ jest.unstable_mockModule('../../src/services/storage.service.js', () => ({
   uploadActaImage: jest.fn().mockResolvedValue('actas/045821/foto.jpg'),
   getActaUrl: jest.fn().mockResolvedValue('https://cdn/firmada.jpg'),
   deleteActaImage: jest.fn(),
+  getActaBuffer: jest.fn().mockResolvedValue(Buffer.from('test')),
 }));
 jest.unstable_mockModule('../../src/services/cache.service.js', () => ({
   cacheWrap: jest.fn((k, ttl, fn) => fn()),

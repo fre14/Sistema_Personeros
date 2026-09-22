@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { get } from '../../services/api';
+import api, { get } from '../../services/api';
 import { useSocket } from '../../contexts/SocketContext';
 import Card from '../../components/ui/Card';
 import Table from '../../components/ui/Table';
@@ -47,6 +47,8 @@ const ResultadosAdminPage = () => {
   const [locales, setLocales] = useState([]);
   const [loading, setLoading] = useState(false);
   const [vistaModo, setVistaModo] = useState('completo'); // 'completo' | 'graficos' | 'mesas'
+  const [tipoEleccion, setTipoEleccion] = useState('provincial'); // 'provincial' | 'distrital'
+  const [descargando, setDescargando] = useState(false);
 
   // Filtros territoriales exclusivos para las gráficas (Desglose por Distrito y Local)
   const [filtroDistrito, setFiltroDistrito] = useState('');
@@ -83,15 +85,15 @@ const ResultadosAdminPage = () => {
     fetchCatalogos();
   }, []);
 
-  // Carga de estadísticas y gráficos al cambiar filtros territoriales
+  // Carga de estadísticas y gráficos al cambiar filtros territoriales o tipo de elección
   useEffect(() => {
     fetchEstadisticas();
-  }, [filtroDistrito, filtroLocal]);
+  }, [tipoEleccion, filtroDistrito, filtroLocal]);
 
   // Carga de la tabla de mesas
   useEffect(() => {
     fetchMesas();
-  }, [searchTerm, selectedDistrito, selectedLocal, selectedEstado, page]);
+  }, [tipoEleccion, searchTerm, selectedDistrito, selectedLocal, selectedEstado, page]);
 
   // Sincronización en tiempo real vía Socket.io
   useEffect(() => {
@@ -111,7 +113,7 @@ const ResultadosAdminPage = () => {
         socket.off('resultado:observado', handleRealtimeUpdate);
       };
     }
-  }, [socket, filtroDistrito, filtroLocal, page, searchTerm, selectedDistrito, selectedLocal, selectedEstado]);
+  }, [socket, tipoEleccion, filtroDistrito, filtroLocal, page, searchTerm, selectedDistrito, selectedLocal, selectedEstado]);
 
   const fetchCatalogos = async () => {
     try {
@@ -129,16 +131,16 @@ const ResultadosAdminPage = () => {
   const fetchEstadisticas = async () => {
     setLoadingStats(true);
     try {
-      let queryParams = '';
-      if (filtroDistrito) queryParams += `?distrito_id=${filtroDistrito}`;
-      if (filtroLocal) queryParams += `${queryParams ? '&' : '?'}local_id=${filtroLocal}`;
+      let queryParams = `?tipo_eleccion=${tipoEleccion}`;
+      if (filtroDistrito) queryParams += `&distrito_id=${filtroDistrito}`;
+      if (filtroLocal) queryParams += `&local_id=${filtroLocal}`;
 
       const [resumenRes, candRes, compRes, distRes, locRes] = await Promise.all([
         get(`/dashboard/resumen${queryParams}`),
         get(`/dashboard/por-candidato${queryParams}`),
         get(`/dashboard/composicion-voto${queryParams}`),
-        get('/dashboard/por-distrito'),
-        get(`/dashboard/por-local${filtroDistrito ? `?distrito_id=${filtroDistrito}` : ''}`)
+        get(`/dashboard/por-distrito?tipo_eleccion=${tipoEleccion}`),
+        get(`/dashboard/por-local?tipo_eleccion=${tipoEleccion}${filtroDistrito ? `&distrito_id=${filtroDistrito}` : ''}`)
       ]);
 
       setResumen(resumenRes.data?.data || resumenRes.data || null);
@@ -170,7 +172,7 @@ const ResultadosAdminPage = () => {
   const fetchMesas = async () => {
     setLoading(true);
     try {
-      let url = `/mesas?page=${page}&limit=25`;
+      let url = `/mesas?page=${page}&limit=25&tipo_eleccion=${tipoEleccion}`;
       if (searchTerm) url += `&q=${encodeURIComponent(searchTerm)}`;
       if (selectedDistrito) url += `&distrito_id=${selectedDistrito}`;
       if (selectedLocal) url += `&local_id=${selectedLocal}`;
@@ -190,6 +192,37 @@ const ResultadosAdminPage = () => {
       toast.error('Error al cargar mesas');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const distritosDisponibles = useMemo(() => {
+    if (tipoEleccion === 'distrital') {
+      return distritos.filter(d => d.tiene_eleccion_distrital);
+    }
+    return distritos;
+  }, [distritos, tipoEleccion]);
+
+  const descargarZip = async (tipo) => {
+    setDescargando(true);
+    const etiqueta = tipo === 'provincial' ? 'Provinciales' : tipo === 'distrital' ? 'Distritales' : 'Completas';
+    const toastId = toast.loading(`Generando archivo ZIP de actas ${etiqueta}...`);
+    try {
+      const res = await api.get(`/descargas/${tipo}`, { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'application/zip' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `actas_${tipo}_${new Date().toISOString().slice(0, 10)}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success(`Actas ${etiqueta} descargadas con éxito`, { id: toastId });
+    } catch (error) {
+      console.error('Error al descargar ZIP:', error);
+      toast.error('Error al generar la descarga del archivo ZIP', { id: toastId });
+    } finally {
+      setDescargando(false);
     }
   };
 
@@ -215,8 +248,8 @@ const ResultadosAdminPage = () => {
       const dist = distritos.find(d => String(d.id) === String(filtroDistrito));
       return `Distrito: ${dist ? dist.nombre : filtroDistrito}`;
     }
-    return 'Total Provincial (Huamanga)';
-  }, [filtroDistrito, filtroLocal, distritos, locales]);
+    return tipoEleccion === 'distrital' ? 'Ámbito Distrital (Distritos con Candidatura)' : 'Total Provincial (Huamanga)';
+  }, [tipoEleccion, filtroDistrito, filtroLocal, distritos, locales]);
 
   const handleCambioDistritoGrafico = (e) => {
     setFiltroDistrito(e.target.value);
@@ -351,6 +384,34 @@ const ResultadosAdminPage = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+          {/* Tabs Provincial / Distrital */}
+          <div className="bg-gray-100 p-1 rounded-xl flex text-xs font-bold border border-gray-200">
+            <button
+              onClick={() => {
+                setTipoEleccion('provincial');
+                setFiltroDistrito('');
+                setFiltroLocal('');
+              }}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                tipoEleccion === 'provincial' ? 'bg-red-700 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              🏛️ Provincial
+            </button>
+            <button
+              onClick={() => {
+                setTipoEleccion('distrital');
+                setFiltroDistrito('');
+                setFiltroLocal('');
+              }}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                tipoEleccion === 'distrital' ? 'bg-red-700 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              🏘️ Distrital
+            </button>
+          </div>
+
           {/* Selector de Vistas */}
           <div className="bg-gray-100 p-1 rounded-xl flex text-xs font-bold border border-gray-200">
             <button
@@ -373,6 +434,37 @@ const ResultadosAdminPage = () => {
             </button>
           </div>
 
+          {/* Descargas ZIP de Actas Verificadas */}
+          <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-xl border border-gray-200">
+            <button
+              onClick={() => descargarZip('provincial')}
+              disabled={descargando}
+              className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-white hover:bg-gray-100 text-blue-800 border border-gray-200 shadow-xs flex items-center gap-1 transition-colors"
+              title="Descargar actas provinciales verificadas en carpetas por distrito/local/mesa"
+            >
+              <Download size={12} className="text-blue-600" />
+              ZIP Prov.
+            </button>
+            <button
+              onClick={() => descargarZip('distrital')}
+              disabled={descargando}
+              className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-white hover:bg-gray-100 text-purple-800 border border-gray-200 shadow-xs flex items-center gap-1 transition-colors"
+              title="Descargar actas distritales verificadas en carpetas por distrito/local/mesa"
+            >
+              <Download size={12} className="text-purple-600" />
+              ZIP Dist.
+            </button>
+            <button
+              onClick={() => descargarZip('completa')}
+              disabled={descargando}
+              className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-white hover:bg-gray-100 text-emerald-800 border border-gray-200 shadow-xs flex items-center gap-1 transition-colors"
+              title="Descargar todas las actas verificadas (provinciales y distritales)"
+            >
+              <Download size={12} className="text-emerald-600" />
+              ZIP Todo
+            </button>
+          </div>
+
           <Button 
             onClick={() => { fetchEstadisticas(); fetchMesas(); }} 
             isLoading={loadingStats || loading} 
@@ -386,11 +478,11 @@ const ResultadosAdminPage = () => {
           {(vistaModo === 'completo' || vistaModo === 'graficos') && (
             <Button
               variant="primary"
-              onClick={() => exportarGraficoComoImagen('reporte-graficos-completo', `reporte-electoral-${filtroDistrito ? 'distrito' : 'provincial'}`)}
+              onClick={() => exportarGraficoComoImagen('reporte-graficos-completo', `reporte-electoral-${tipoEleccion}-${filtroDistrito ? 'distrito' : 'general'}`)}
               className="flex items-center text-xs font-bold bg-red-700 hover:bg-red-800 text-white shadow-sm"
             >
               <Download size={14} className="mr-1.5" />
-              Descargar Reporte Completo (PNG)
+              PNG
             </Button>
           )}
         </div>
@@ -410,7 +502,7 @@ const ResultadosAdminPage = () => {
               </div>
               <div>
                 <h2 className="text-base font-extrabold text-gray-900 tracking-tight">
-                  TABLERO OFICIAL DE RESULTADOS ELECTORALES
+                  TABLERO OFICIAL DE RESULTADOS ELECTORALES ({tipoEleccion.toUpperCase()})
                 </h2>
                 <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 mt-0.5">
                   <span className="inline-flex items-center gap-1 text-red-700 bg-red-50 px-2 py-0.5 rounded-md border border-red-200">
@@ -435,8 +527,8 @@ const ResultadosAdminPage = () => {
                 onChange={handleCambioDistritoGrafico}
                 className="text-xs font-medium border border-gray-300 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 focus:ring-2 focus:ring-red-500 focus:outline-none"
               >
-                <option value="">Todos los Distritos (Total Huamanga)</option>
-                {distritos.map(d => (
+                <option value="">{tipoEleccion === 'distrital' ? 'Todos los Distritos con Candidatura' : 'Todos los Distritos (Total Huamanga)'}</option>
+                {distritosDisponibles.map(d => (
                   <option key={d.id} value={d.id}>{d.nombre}</option>
                 ))}
               </select>
@@ -1023,8 +1115,8 @@ const ResultadosAdminPage = () => {
                 onChange={(e) => { setSelectedDistrito(e.target.value); setSelectedLocal(''); setPage(1); }}
                 className="text-xs font-medium border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-800 focus:ring-2 focus:ring-red-500 focus:outline-none"
               >
-                <option value="">Todos los Distritos</option>
-                {distritos.map(d => (
+                <option value="">{tipoEleccion === 'distrital' ? 'Todos los Distritos con Candidatura' : 'Todos los Distritos'}</option>
+                {distritosDisponibles.map(d => (
                   <option key={d.id} value={d.id}>{d.nombre}</option>
                 ))}
               </select>
@@ -1057,7 +1149,9 @@ const ResultadosAdminPage = () => {
 
           {/* Tabla de Mesas */}
           <Table headers={['N° Mesa', 'Distrito', 'Local de Votación', 'Estado', 'Personero', 'Acciones']}>
-            {mesas.map((row) => (
+            {mesas.map((row) => {
+              const estadoAMostrar = tipoEleccion === 'distrital' ? (row.estado_distrital || 'pendiente') : row.estado;
+              return (
               <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   <span className="font-extrabold font-mono text-gray-900">{row.numero_mesa}</span>
@@ -1071,7 +1165,7 @@ const ResultadosAdminPage = () => {
                   <p className="text-[11px] text-gray-500">{row.local_direccion}</p>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <Badge variant={row.estado}>{row.estado}</Badge>
+                  <Badge variant={estadoAMostrar}>{estadoAMostrar}</Badge>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   {row.personero_nombre ? (
@@ -1095,7 +1189,7 @@ const ResultadosAdminPage = () => {
                   </Button>
                 </td>
               </tr>
-            ))}
+            );})}
           </Table>
 
           {/* Paginación */}

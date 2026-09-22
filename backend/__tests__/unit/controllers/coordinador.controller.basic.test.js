@@ -3,6 +3,7 @@ import { jest } from '@jest/globals';
 const mockDbChain = {
   where: jest.fn().mockReturnThis(),
   whereIn: jest.fn().mockReturnThis(),
+  whereNotNull: jest.fn().mockReturnThis(),
   join: jest.fn().mockReturnThis(),
   leftJoin: jest.fn().mockReturnThis(),
   select: jest.fn().mockReturnThis(),
@@ -84,6 +85,45 @@ describe('Coordinador Controller - Pruebas Unitarias', () => {
                 verificadas: 4,
                 observadas: 1,
                 personeros_asignados: 8,
+              }),
+            }),
+          ]),
+        })
+      );
+    });
+
+    it('debe retornar locales con estadisticas distritales cuando tiene_eleccion_distrital es true', async () => {
+      const req = mockReq();
+      const res = mockRes();
+
+      mockDbChain.orderBy.mockResolvedValueOnce([
+        { id: 11, nombre: 'I.E. San Juan', direccion: 'Jr. Lima', distrito: 'San Juan Bautista', distrito_id: 2, tiene_eleccion_distrital: true },
+      ]);
+
+      mockDbChain.groupBy.mockResolvedValueOnce([
+        { estado: 'verificada', c: '5' },
+      ]);
+
+      mockDbChain.groupBy.mockResolvedValueOnce([
+        { estado_distrital: 'verificada', c: '4' },
+        { estado_distrital: 'pendiente', c: '1' },
+      ]);
+
+      mockDbChain.first.mockResolvedValueOnce({ c: '5' });
+
+      await coordinadorController.getMisLocales(req, res);
+
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          data: expect.arrayContaining([
+            expect.objectContaining({
+              id: 11,
+              tiene_distrital: true,
+              stats_distrital: expect.objectContaining({
+                total: 5,
+                verificadas: 4,
+                pendientes: 1,
               }),
             }),
           ]),

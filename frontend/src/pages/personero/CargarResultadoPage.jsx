@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
@@ -19,6 +19,8 @@ const CargarResultadoPage = () => {
   const [submitting, setSubmitting] = useState(false);
   const [compressing, setCompressing] = useState(false);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const tipoEleccion = searchParams.get('tipo') || 'provincial';
 
   // Form state
   const [fotoFile, setFotoFile] = useState(null);
@@ -34,45 +36,38 @@ const CargarResultadoPage = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Fetch candidatos ordenados por número de lista
-        const resCandidatos = await api.get('/candidatos');
-        const candidatosList = resCandidatos.data?.data || resCandidatos.data || [];
-        const sorted = [...candidatosList].sort((a, b) => (a.numero_lista || 0) - (b.numero_lista || 0));
+        const resMesa = await api.get('/resultados/mi-mesa');
+        const dataMesa = resMesa.data?.data || resMesa.data;
+        const mesa = dataMesa?.mesa || dataMesa;
+        
+        const cands = tipoEleccion === 'distrital' ? dataMesa.candidatos_distritales : (dataMesa.candidatos_provinciales || dataMesa.candidatos || []);
+        const sorted = [...cands].sort((a, b) => (a.numero_lista || 0) - (b.numero_lista || 0));
         setCandidatos(sorted);
 
         const initialVotos = {};
         sorted.forEach(c => initialVotos[c.id] = '');
 
-        // Fetch info de la mesa asignada al personero
-        try {
-          const resMesa = await api.get('/resultados/mi-mesa');
-          const dataMesa = resMesa.data?.data || resMesa.data;
-          const mesa = dataMesa?.mesa || dataMesa;
-          const resObj = dataMesa?.resultado || null;
-          setMesaInfo(mesa);
-          setResultadoExistente(resObj);
+        const resObj = tipoEleccion === 'distrital' ? dataMesa.resultado_distrital : (dataMesa.resultado_provincial || dataMesa.resultado);
+        setMesaInfo(mesa);
+        setResultadoExistente(resObj);
 
-          if (resObj) {
-            // Precargar votos anteriores
-            if (resObj.detalles && Array.isArray(resObj.detalles)) {
-              resObj.detalles.forEach(d => {
-                initialVotos[d.candidato_id] = String(d.votos || 0);
-              });
-            }
-            if (resObj.votos_blanco !== undefined && resObj.votos_blanco !== null) setVotosBlanco(String(resObj.votos_blanco));
-            if (resObj.votos_nulo !== undefined && resObj.votos_nulo !== null) setVotosNulos(String(resObj.votos_nulo));
-            if (resObj.votos_impugnados !== undefined && resObj.votos_impugnados !== null) setVotosImpugnados(String(resObj.votos_impugnados));
-            if (resObj.total_cedulas_votacion) setTotalCedulas(String(resObj.total_cedulas_votacion));
-            if (resObj.observaciones_personero) setObservaciones(resObj.observaciones_personero);
-            
-            const rawPhoto = resObj.foto_acta_url_presigned || resObj.foto_acta_url;
-            if (rawPhoto) {
-              const cleanUrl = rawPhoto.startsWith('http') || rawPhoto.startsWith('/') ? rawPhoto : `/${rawPhoto}`;
-              setFotoPreview(cleanUrl);
-            }
+        if (resObj) {
+          if (resObj.detalles && Array.isArray(resObj.detalles)) {
+            resObj.detalles.forEach(d => {
+              initialVotos[d.candidato_id] = String(d.votos || 0);
+            });
           }
-        } catch (e) {
-          console.warn('No se pudo obtener info de mesa:', e);
+          if (resObj.votos_blanco !== undefined && resObj.votos_blanco !== null) setVotosBlanco(String(resObj.votos_blanco));
+          if (resObj.votos_nulo !== undefined && resObj.votos_nulo !== null) setVotosNulos(String(resObj.votos_nulo));
+          if (resObj.votos_impugnados !== undefined && resObj.votos_impugnados !== null) setVotosImpugnados(String(resObj.votos_impugnados));
+          if (resObj.total_cedulas_votacion) setTotalCedulas(String(resObj.total_cedulas_votacion));
+          if (resObj.observaciones_personero) setObservaciones(resObj.observaciones_personero);
+          
+          const rawPhoto = resObj.foto_acta_url_presigned || resObj.foto_acta_url;
+          if (rawPhoto) {
+            const cleanUrl = rawPhoto.startsWith('http') || rawPhoto.startsWith('/') ? rawPhoto : `/${rawPhoto}`;
+            setFotoPreview(cleanUrl);
+          }
         }
 
         setVotos(initialVotos);
@@ -84,9 +79,8 @@ const CargarResultadoPage = () => {
       }
     };
     fetchData();
-  }, []);
+  }, [tipoEleccion]);
 
-  // Compresión automática al tomar o seleccionar foto del acta física
   const handlePhotoCapture = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -98,13 +92,7 @@ const CargarResultadoPage = () => {
 
     setCompressing(true);
     try {
-      const result = await compressImage(file, {
-        maxWidth: 1920,
-        maxHeight: 1920,
-        quality: 0.7,
-        maxSizeKB: 400,
-      });
-
+      const result = await compressImage(file, { maxWidth: 1920, maxHeight: 1920, quality: 0.7, maxSizeKB: 400 });
       setFotoFile(result.file);
       setFotoPreview(result.preview);
       setCompressionInfo({
@@ -112,10 +100,8 @@ const CargarResultadoPage = () => {
         compressed: result.compressedSize,
         saved: Math.round((1 - result.compressedSize / result.originalSize) * 100),
       });
-
       toast.success('Foto del acta comprimida y lista');
     } catch (error) {
-      console.error('Error al comprimir:', error);
       setFotoFile(file);
       setFotoPreview(URL.createObjectURL(file));
       setCompressionInfo(null);
@@ -132,19 +118,14 @@ const CargarResultadoPage = () => {
     setCompressionInfo(null);
   };
 
-  // Cálculo en tiempo real de los votos emitidos
   const calculateTotal = () => {
     const sumCandidatos = Object.values(votos).reduce((acc, val) => acc + (parseInt(val, 10) || 0), 0);
-    return sumCandidatos +
-      (parseInt(votosBlanco, 10) || 0) +
-      (parseInt(votosNulos, 10) || 0) +
-      (parseInt(votosImpugnados, 10) || 0);
+    return sumCandidatos + (parseInt(votosBlanco, 10) || 0) + (parseInt(votosNulos, 10) || 0) + (parseInt(votosImpugnados, 10) || 0);
   };
 
   const totalVotos = calculateTotal();
   const electoresHabiles = mesaInfo?.total_electores_habiles || 300;
   
-  // Validación estricta: No puede superar los 300 votos por mesa
   const excedeLimite300 = totalVotos > MAXIMO_VOTOS_POR_MESA;
   const excedeElectores = electoresHabiles > 0 && totalVotos > electoresHabiles;
   const excedeCualquierLimite = excedeLimite300 || excedeElectores;
@@ -168,31 +149,23 @@ const CargarResultadoPage = () => {
     setSubmitting(true);
     try {
       const formData = new FormData();
+      if (fotoFile) formData.append('foto_acta', fotoFile);
+      if (mesaInfo?.id) formData.append('mesa_id', mesaInfo.id);
+      
+      formData.append('tipo_eleccion', tipoEleccion);
 
-      if (fotoFile) {
-        formData.append('foto_acta', fotoFile);
-      }
-
-      if (mesaInfo?.id) {
-        formData.append('mesa_id', mesaInfo.id);
-      }
-
-      // Votos por candidato en formato JSON
       const votosArray = Object.entries(votos).map(([id, cant]) => ({
         candidato_id: parseInt(id, 10),
         votos: parseInt(cant, 10) || 0
       }));
       formData.append('votos', JSON.stringify(votosArray));
-
       formData.append('votos_blanco', parseInt(votosBlanco, 10) || 0);
       formData.append('votos_nulo', parseInt(votosNulos, 10) || 0);
       formData.append('votos_impugnados', parseInt(votosImpugnados, 10) || 0);
       formData.append('total_cedulas_votacion', parseInt(totalCedulas, 10) || totalVotos);
       formData.append('total_votos_emitidos', totalVotos);
 
-      if (observaciones) {
-        formData.append('observaciones_personero', observaciones);
-      }
+      if (observaciones) formData.append('observaciones_personero', observaciones);
 
       await api.post('/resultados', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -211,11 +184,13 @@ const CargarResultadoPage = () => {
 
   if (loading) return <div className="flex justify-center p-8"><Spinner text="Cargando datos de mesa..." /></div>;
 
-  const estadoMesa = (mesaInfo?.estado || '').toLowerCase();
+  const estadoMesaActual = tipoEleccion === 'distrital' ? mesaInfo?.estado_distrital : mesaInfo?.estado;
+  const estadoMesa = (estadoMesaActual || '').toLowerCase();
   const estadoRes = (resultadoExistente?.estado || '').toLowerCase();
   const estaObservada = estadoMesa === 'observada' || estadoRes === 'observado' || estadoRes === 'observada';
   const yaTransmitida = Boolean(resultadoExistente && (estadoRes === 'pendiente' || estadoRes === 'reportada' || estadoRes === 'verificado' || estadoRes === 'verificada' || estadoMesa === 'reportada' || estadoMesa === 'verificada'));
   const bloqueado = yaTransmitida && !estaObservada;
+  const tipoTitulo = tipoEleccion === 'distrital' ? 'Distrital' : 'Provincial';
 
   if (bloqueado) {
     return (
@@ -223,7 +198,7 @@ const CargarResultadoPage = () => {
         <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
           <ShieldAlert size={36} />
         </div>
-        <h2 className="text-2xl font-black text-gray-900">Acta Ya Transmitida</h2>
+        <h2 className="text-2xl font-black text-gray-900">Acta {tipoTitulo} Ya Transmitida</h2>
         <p className="text-sm text-gray-600 leading-relaxed">
           Los resultados y la fotografía de la <strong>Mesa {mesaInfo?.numero_mesa}</strong> ya fueron enviados con éxito y se encuentran en proceso de revisión por el coordinador de su local de votación (o ya han sido verificados).
         </p>
@@ -244,6 +219,15 @@ const CargarResultadoPage = () => {
 
   return (
     <div className="max-w-lg mx-auto pb-12">
+      {/* Badge Header */}
+      <div className="mb-4 flex justify-center">
+        <span className={`px-4 py-1 text-xs font-black uppercase rounded-full text-white shadow-sm ${
+          tipoEleccion === 'distrital' ? 'bg-purple-600' : 'bg-blue-600'
+        }`}>
+          Cargando Acta {tipoTitulo}
+        </span>
+      </div>
+
       {estaObservada && (
         <div className="mb-4 p-4 bg-red-50 border-2 border-red-300 rounded-xl text-left space-y-1.5 shadow-sm">
           <div className="flex items-center gap-2 text-red-900 font-black text-sm">
@@ -288,10 +272,10 @@ const CargarResultadoPage = () => {
 
       {/* PASO 1: FOTO DEL ACTA */}
       {step === 1 && (
-        <Card title="📸 Paso 1: Foto del Acta de Escrutinio">
+        <Card title={`📸 Paso 1: Foto del Acta ${tipoTitulo}`}>
           <div className="space-y-4">
             <p className="text-sm text-gray-600 leading-relaxed">
-              Tome una fotografía nítida y legible del <strong>Acta de Escrutinio</strong> firmada por los miembros de mesa. La imagen se optimizará automáticamente.
+              Tome una fotografía nítida y legible del <strong>Acta {tipoTitulo}</strong> firmada por los miembros de mesa. La imagen se optimizará automáticamente.
             </p>
 
             {compressing ? (
@@ -330,7 +314,7 @@ const CargarResultadoPage = () => {
                   <div className="w-16 h-16 rounded-full bg-red-100 text-red-600 flex items-center justify-center mb-3">
                     <Camera size={32} />
                   </div>
-                  <p className="text-base text-red-700 font-bold">Tomar foto del Acta</p>
+                  <p className="text-base text-red-700 font-bold">Tomar foto del Acta {tipoTitulo}</p>
                   <p className="text-xs text-red-400 mt-1">o seleccionar desde la galería</p>
                 </div>
                 <input
@@ -358,17 +342,15 @@ const CargarResultadoPage = () => {
       {step === 2 && (
         <Card title="✏️ Paso 2: Registro de Votos">
           <div className="space-y-4">
-            {/* Advertencia de límite de 300 votos */}
             <div className="bg-red-50 border-l-4 border-red-600 p-3 rounded-r-lg">
               <p className="text-xs text-red-900 font-medium">
                 ⚠️ <strong>Reglamento Electoral:</strong> El total de votos emitidos por mesa <strong>no puede exceder los 300 votos</strong>. Transcriba con exactitud cada cifra del acta física.
               </p>
             </div>
 
-            {/* Votos por cada lista o candidato */}
             <div className="space-y-2">
               <p className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1">
-                Votos por Partido / Organización Política (9 Listas)
+                Votos por Partido / Organización Política ({candidatos.length} Listas)
               </p>
 
               {candidatos.map((c) => (
@@ -396,7 +378,7 @@ const CargarResultadoPage = () => {
                     max="300"
                     className="w-20 text-center text-lg py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 font-extrabold text-gray-900 bg-white"
                     placeholder="0"
-                    value={votos[c.id]}
+                    value={votos[c.id] || ''}
                     onChange={(e) => {
                       const val = e.target.value.replace(/\D/g, '');
                       setVotos({ ...votos, [c.id]: val });
@@ -406,7 +388,6 @@ const CargarResultadoPage = () => {
               ))}
             </div>
 
-            {/* Blancos, Nulos, Impugnados y Cédulas */}
             <div className="pt-4 border-t-2 border-gray-200 space-y-3">
               <p className="text-xs font-bold uppercase tracking-wider text-gray-500">
                 Otros Votos Electorales
@@ -472,7 +453,6 @@ const CargarResultadoPage = () => {
               </div>
             </div>
 
-            {/* Contador y Alerta del Total de Votos */}
             <div className={`p-4 rounded-xl mt-4 flex justify-between items-center transition-all ${
               excedeCualquierLimite 
                 ? 'bg-red-100 border-2 border-red-500 shadow-sm' 
@@ -490,7 +470,6 @@ const CargarResultadoPage = () => {
               </div>
             </div>
 
-            {/* Mensaje de error bloqueante si supera 300 votos */}
             {excedeLimite300 && (
               <div className="flex items-start gap-2.5 bg-red-100 border-2 border-red-400 rounded-lg p-3 text-red-800">
                 <ShieldAlert size={20} className="text-red-600 mt-0.5 flex-shrink-0" />
@@ -503,7 +482,6 @@ const CargarResultadoPage = () => {
               </div>
             )}
 
-            {/* Mensaje si excede electores hábiles de la mesa */}
             {!excedeLimite300 && excedeElectores && (
               <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 rounded-lg p-3 text-amber-800">
                 <AlertTriangle size={18} className="text-amber-600 mt-0.5 flex-shrink-0" />
@@ -526,9 +504,8 @@ const CargarResultadoPage = () => {
 
       {/* PASO 3: CONFIRMACIÓN FINAL */}
       {step === 3 && (
-        <Card title="📋 Paso 3: Confirmación de Resultados">
+        <Card title={`📋 Paso 3: Confirmación de Resultados ${tipoTitulo}`}>
           <div className="space-y-4 text-sm">
-            {/* Foto adjunta */}
             {fotoPreview && (
               <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
                 <ImageIcon size={20} className="text-emerald-600" />
@@ -542,7 +519,6 @@ const CargarResultadoPage = () => {
               </div>
             )}
 
-            {/* Resumen de Votos por Partido */}
             <div className="border border-gray-200 rounded-lg overflow-hidden divide-y divide-gray-100">
               <div className="bg-gray-100 px-3 py-2 text-xs font-bold text-gray-700 flex justify-between">
                 <span>Partido / Organización</span>
@@ -573,7 +549,6 @@ const CargarResultadoPage = () => {
               </div>
             </div>
 
-            {/* Total Destacado */}
             <div className="bg-red-50 p-3 rounded-lg border border-red-200 flex justify-between items-center">
               <div>
                 <span className="font-extrabold text-red-900 text-sm block">TOTAL VOTOS EMITIDOS:</span>
@@ -582,7 +557,6 @@ const CargarResultadoPage = () => {
               <span className="text-2xl font-black text-red-700">{totalVotos}</span>
             </div>
 
-            {/* Observaciones opcionales */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1">
                 Observaciones del Personero (Opcional)
@@ -596,7 +570,6 @@ const CargarResultadoPage = () => {
               />
             </div>
 
-            {/* Declaración y Botón Enviar */}
             <div className="bg-red-50/70 p-4 rounded-xl border border-red-200 mt-4 text-center">
               <p className="text-xs text-red-900 mb-3 leading-tight">
                 Declaro bajo juramento que los votos ingresados corresponden exactamente al acta de escrutinio suscrita en mi mesa.

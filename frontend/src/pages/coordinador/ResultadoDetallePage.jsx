@@ -98,6 +98,15 @@ const ResultadoDetallePage = () => {
             Volver
           </Button>
           <div>
+            <div className="flex items-center gap-2 mb-1">
+              {resultado.tipo_eleccion && (
+                <span className={`px-2 py-0.5 text-[10px] font-black uppercase rounded text-white ${
+                  resultado.tipo_eleccion === 'distrital' ? 'bg-purple-600' : 'bg-blue-600'
+                }`}>
+                  ACTA {resultado.tipo_eleccion === 'distrital' ? 'DISTRITAL' : 'PROVINCIAL'}
+                </span>
+              )}
+            </div>
             <h1 className="text-2xl font-black text-gray-900 flex items-center gap-2">
               Acta de Escrutinio • Mesa {resultado.numero_mesa}
             </h1>
@@ -113,7 +122,6 @@ const ResultadoDetallePage = () => {
         </div>
       </div>
 
-      {/* Alertas según estado */}
       {estaVerificada && (
         <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center gap-3 text-emerald-900 shadow-sm">
           <CheckCircle2 size={24} className="text-emerald-600 shrink-0" />
@@ -138,7 +146,6 @@ const ResultadoDetallePage = () => {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Info y Votos */}
         <div className="space-y-6">
           <Card title="Información de la Mesa">
             <div className="grid grid-cols-2 gap-4 text-sm">
@@ -209,7 +216,6 @@ const ResultadoDetallePage = () => {
           </Card>
         </div>
 
-        {/* Foto y Panel de Validación */}
         <div className="space-y-6">
           <Card title="Fotografía del Acta Física">
             <div className="relative group border border-gray-300 rounded-xl overflow-hidden bg-gray-900 min-h-[420px] flex items-center justify-center">
@@ -241,7 +247,6 @@ const ResultadoDetallePage = () => {
             </p>
           </Card>
 
-          {/* Panel de Decisiones para el Coordinador */}
           <div className="p-5 bg-white rounded-xl shadow-md border-2 border-gray-200 space-y-3">
             <h3 className="font-black text-gray-900 text-base flex items-center gap-2">
               <ShieldCheck className="text-red-600" size={20} />
@@ -279,7 +284,6 @@ const ResultadoDetallePage = () => {
         </div>
       </div>
 
-      {/* Modal de Zoom de Imagen */}
       <Modal isOpen={zoomModalOpen} onClose={() => setZoomModalOpen(false)} title={`Acta Oficial - Mesa ${resultado.numero_mesa}`} size="full">
         <div className="flex flex-col items-center justify-center bg-gray-950 p-4 rounded-xl min-h-[75vh]">
           {photoUrl && (
@@ -305,14 +309,12 @@ const ResultadoDetallePage = () => {
         </div>
       </Modal>
 
-      {/* Modal de Observación */}
       <Modal isOpen={obsModalOpen} onClose={() => setObsModalOpen(false)} title="Observar / Declinar Acta Electoral">
         <div className="space-y-4">
           <p className="text-sm text-gray-600 leading-relaxed">
             Indica el motivo exacto por el cual esta acta no es válida. El personero de la mesa recibirá una notificación inmediata y se le habilitará la pantalla para corregir y reenviar los datos.
           </p>
 
-          {/* Opciones rápidas */}
           <div>
             <span className="text-xs font-bold text-gray-700 block mb-1.5">Motivos Frecuentes (selección rápida):</span>
             <div className="flex flex-wrap gap-1.5">

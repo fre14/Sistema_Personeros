@@ -15,11 +15,13 @@ export const getMisLocales = async (req, res) => {
     }
 
     const locales = await localesQuery
-      .select('l.id', 'l.nombre', 'l.direccion', 'd.nombre as distrito', 'd.id as distrito_id')
+      .select('l.id', 'l.nombre', 'l.direccion', 'd.nombre as distrito', 'd.id as distrito_id', 'd.tiene_eleccion_distrital')
       .orderBy('l.nombre', 'asc');
 
     const localesConStats = await Promise.all(
       locales.map(async (local) => {
+        const tieneDistrital = local.tiene_eleccion_distrital || false;
+
         const mesasEstados = await db('mesas_sufragio')
           .where({ local_id: local.id })
           .select('estado')
@@ -35,14 +37,44 @@ export const getMisLocales = async (req, res) => {
           personeros_asignados: 0,
         };
 
-        mesasEstados.forEach((fila) => {
-          const count = parseInt(fila.c, 10) || 0;
-          stats.total += count;
-          if (fila.estado === 'pendiente') stats.pendientes += count;
-          else if (fila.estado === 'reportada') stats.reportadas += count;
-          else if (fila.estado === 'verificada') stats.verificadas += count;
-          else if (fila.estado === 'observada') stats.observadas += count;
-        });
+        if (Array.isArray(mesasEstados)) {
+          mesasEstados.forEach((fila) => {
+            const count = parseInt(fila.c, 10) || 0;
+            stats.total += count;
+            if (fila.estado === 'pendiente') stats.pendientes += count;
+            else if (fila.estado === 'reportada') stats.reportadas += count;
+            else if (fila.estado === 'verificada') stats.verificadas += count;
+            else if (fila.estado === 'observada') stats.observadas += count;
+          });
+        }
+
+        const statsDistrital = {
+          total: 0,
+          pendientes: 0,
+          reportadas: 0,
+          verificadas: 0,
+          observadas: 0,
+        };
+
+        if (tieneDistrital) {
+          const mesasDistritales = await db('mesas_sufragio')
+            .where({ local_id: local.id })
+            .whereNotNull('estado_distrital')
+            .select('estado_distrital')
+            .count('id as c')
+            .groupBy('estado_distrital');
+
+          if (Array.isArray(mesasDistritales)) {
+            mesasDistritales.forEach((fila) => {
+              const count = parseInt(fila.c, 10) || 0;
+              statsDistrital.total += count;
+              if (fila.estado_distrital === 'pendiente') statsDistrital.pendientes += count;
+              else if (fila.estado_distrital === 'reportada') statsDistrital.reportadas += count;
+              else if (fila.estado_distrital === 'verificada') statsDistrital.verificadas += count;
+              else if (fila.estado_distrital === 'observada') statsDistrital.observadas += count;
+            });
+          }
+        }
 
         const personerosCount = await db('asignacion_personeros as ap')
           .join('mesas_sufragio as m', 'ap.mesa_id', 'm.id')
@@ -52,14 +84,23 @@ export const getMisLocales = async (req, res) => {
 
         stats.personeros_asignados = parseInt(personerosCount?.c, 10) || 0;
 
-        return {
+        const resultado = {
           id: local.id,
           nombre: local.nombre,
           direccion: local.direccion,
           distrito: local.distrito,
           distrito_id: local.distrito_id,
+          tiene_distrital: tieneDistrital,
           stats,
         };
+
+        if (tieneDistrital) {
+          resultado.stats_distrital = statsDistrital;
+          resultado.avance_provincial = stats.total ? Number(((stats.verificadas / stats.total) * 100).toFixed(2)) : 0;
+          resultado.avance_distrital = statsDistrital.total ? Number(((statsDistrital.verificadas / statsDistrital.total) * 100).toFixed(2)) : 0;
+        }
+
+        return resultado;
       })
     );
 
@@ -92,29 +133,41 @@ export const getMesasDeLocal = async (req, res) => {
     const local = await db('locales_votacion as l')
       .join('distritos as d', 'l.distrito_id', 'd.id')
       .where('l.id', localId)
-      .select('l.id', 'l.nombre', 'l.direccion', 'd.nombre as distrito')
+      .select('l.id', 'l.nombre', 'l.direccion', 'd.nombre as distrito', 'd.tiene_eleccion_distrital')
       .first();
 
     if (!local) {
       return res.status(404).json({ success: false, message: 'Local no encontrado' });
     }
 
+    const tieneDistrital = local.tiene_eleccion_distrital || false;
+
     const mesas = await db('mesas_sufragio as m')
       .leftJoin('asignacion_personeros as ap', function () {
         this.on('ap.mesa_id', '=', 'm.id').andOn('ap.activo', '=', db.raw('true'));
       })
       .leftJoin('usuarios as u', 'ap.usuario_id', 'u.id')
-      .leftJoin('resultados_mesa as rm', 'rm.mesa_id', 'm.id')
+      .leftJoin('resultados_mesa as rm_prov', function () {
+        this.on('rm_prov.mesa_id', '=', 'm.id').andOn('rm_prov.tipo_eleccion', '=', db.raw("'provincial'"));
+      })
+      .leftJoin('resultados_mesa as rm_dist', function () {
+        this.on('rm_dist.mesa_id', '=', 'm.id').andOn('rm_dist.tipo_eleccion', '=', db.raw("'distrital'"));
+      })
       .where('m.local_id', localId)
       .select(
         'm.id',
         'm.numero_mesa',
         'm.estado',
+        'm.estado_distrital',
         'm.total_electores_habiles as electores_habiles',
-        'rm.id as resultado_id',
-        'rm.estado as resultado_estado',
-        'rm.total_votos_emitidos',
-        'rm.subido_en as resultado_fecha',
+        'rm_prov.id as resultado_id',
+        'rm_prov.estado as resultado_estado',
+        'rm_prov.total_votos_emitidos',
+        'rm_prov.subido_en as resultado_fecha',
+        'rm_dist.id as resultado_distrital_id',
+        'rm_dist.estado as resultado_distrital_estado',
+        'rm_dist.total_votos_emitidos as votos_distrital',
+        'rm_dist.subido_en as resultado_distrital_fecha',
         'u.id as personero_id',
         db.raw("CONCAT(u.nombres, ' ', u.apellidos) as personero_nombre"),
         'u.dni as personero_dni',
@@ -126,7 +179,7 @@ export const getMesasDeLocal = async (req, res) => {
     res.json({
       success: true,
       data: {
-        local,
+        local: { ...local, tiene_distrital: tieneDistrital },
         mesas,
       },
       message: 'Mesas del local obtenidas correctamente',
@@ -148,7 +201,9 @@ export const getPersonerosSupervisados = async (req, res) => {
       .join('mesas_sufragio as m', 'ap.mesa_id', 'm.id')
       .join('locales_votacion as l', 'm.local_id', 'l.id')
       .join('distritos as d', 'l.distrito_id', 'd.id')
-      .leftJoin('resultados_mesa as rm', 'rm.mesa_id', 'm.id')
+      .leftJoin('resultados_mesa as rm', function () {
+        this.on('rm.mesa_id', '=', 'm.id').andOn('rm.tipo_eleccion', '=', db.raw("'provincial'"));
+      })
       .where('ap.activo', true);
 
     if (!esAdmin) {
@@ -188,12 +243,14 @@ export const getPersonerosSupervisados = async (req, res) => {
         'm.id as mesa_id',
         'm.numero_mesa',
         'm.estado as estado_mesa',
+        'm.estado_distrital',
         'm.total_electores_habiles',
         'l.id as local_id',
         'l.nombre as local_nombre',
         'l.direccion as local_direccion',
         'd.id as distrito_id',
         'd.nombre as distrito_nombre',
+        'd.tiene_eleccion_distrital',
         'rm.id as resultado_id',
         'rm.estado as estado_resultado',
         'rm.total_votos_emitidos',

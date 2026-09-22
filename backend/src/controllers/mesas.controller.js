@@ -3,7 +3,10 @@ import { registrarAuditoria } from '../services/auditoria.service.js';
 
 export const getAll = async (req, res) => {
   try {
-    const { local_id, distrito_id, estado, q, disponible, page = 1, limit = 50 } = req.query;
+    const { local_id, distrito_id, estado, q, disponible, page = 1, limit = 50, tipo_eleccion } = req.query;
+    const esDistrital = tipo_eleccion === 'distrital';
+    const campoEstado = esDistrital ? 'mesas.estado_distrital' : 'mesas.estado';
+
     let query = db('mesas_sufragio as mesas')
       .join('locales_votacion as locales', 'mesas.local_id', 'locales.id')
       .join('distritos', 'locales.distrito_id', 'distritos.id')
@@ -22,9 +25,12 @@ export const getAll = async (req, res) => {
         db.raw("CONCAT(usuarios.nombres, ' ', usuarios.apellidos) as personero_nombre")
       );
     
+    if (esDistrital) {
+      query = query.whereNotNull('mesas.estado_distrital');
+    }
     if (local_id) query = query.where('mesas.local_id', local_id);
     if (distrito_id) query = query.where('locales.distrito_id', distrito_id);
-    if (estado) query = query.where('mesas.estado', estado);
+    if (estado) query = query.where(campoEstado, estado);
     if (disponible === 'true') {
       query = query.whereNull('asignacion_personeros.id');
     }
@@ -66,9 +72,27 @@ export const getById = async (req, res) => {
       .select('usuarios.id', 'usuarios.nombres', 'usuarios.apellidos', 'usuarios.dni')
       .where({ 'asignacion_personeros.mesa_id': id, 'asignacion_personeros.activo': true }).first();
       
-    const resultado = await db('resultados_mesa').where({ mesa_id: id }).orderBy('subido_en', 'desc').first();
+    const resultadoProvincial = await db('resultados_mesa')
+      .where({ mesa_id: id, tipo_eleccion: 'provincial' })
+      .orderBy('subido_en', 'desc')
+      .first();
+
+    const resultadoDistrital = await db('resultados_mesa')
+      .where({ mesa_id: id, tipo_eleccion: 'distrital' })
+      .orderBy('subido_en', 'desc')
+      .first();
       
-    res.json({ success: true, data: { ...mesa, personero, resultado }, message: 'Mesa obtenida' });
+    res.json({
+      success: true,
+      data: {
+        ...mesa,
+        personero,
+        resultado: resultadoProvincial,
+        resultado_provincial: resultadoProvincial,
+        resultado_distrital: resultadoDistrital,
+      },
+      message: 'Mesa obtenida'
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error obteniendo mesa', error: error.message });
   }

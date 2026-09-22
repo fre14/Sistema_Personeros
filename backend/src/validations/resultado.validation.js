@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const subirResultadoSchema = z.object({
   mesa_id: z.number().positive('El mesa_id debe ser positivo'),
+  tipo_eleccion: z.enum(['provincial', 'distrital']).optional().default('provincial'),
   votos: z.array(z.object({
     candidato_id: z.number().positive(),
     votos: z.number().min(0)

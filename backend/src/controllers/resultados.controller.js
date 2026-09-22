@@ -45,12 +45,27 @@ const parsearVotos = (votos) => {
   });
 };
 
+const obtenerDistritoMesa = async (mesaId) => {
+  const info = await db('mesas_sufragio as m')
+    .join('locales_votacion as l', 'm.local_id', 'l.id')
+    .join('distritos as d', 'l.distrito_id', 'd.id')
+    .where('m.id', mesaId)
+    .select('d.id as distrito_id', 'd.tiene_eleccion_distrital')
+    .first();
+  return info;
+};
+
 export const subirResultado = async (req, res) => {
   try {
     const {
       mesa_id, votos, votos_blanco, votos_nulo,
       votos_impugnados, total_cedulas_votacion, observaciones_personero,
     } = req.body;
+
+    const tipoEleccion = req.body.tipo_eleccion || 'provincial';
+    if (tipoEleccion !== 'provincial' && tipoEleccion !== 'distrital') {
+      throw new ErrorNegocio(400, 'Tipo de elección inválido. Debe ser provincial o distrital');
+    }
 
     const mesaId = aNumero(mesa_id, 0);
     if (!mesaId) throw new ErrorNegocio(400, 'Debe indicar la mesa');
@@ -71,8 +86,19 @@ export const subirResultado = async (req, res) => {
 
     const mesa = await db('mesas_sufragio').where({ id: mesaId }).first();
     if (!mesa) throw new ErrorNegocio(404, 'Mesa no encontrada');
-    if (mesa.estado !== 'pendiente' && mesa.estado !== 'observada') {
-      throw new ErrorNegocio(400, `La mesa ya fue procesada (estado: ${mesa.estado})`);
+
+    const campoEstado = tipoEleccion === 'distrital' ? 'estado_distrital' : 'estado';
+    const estadoActual = mesa[campoEstado];
+
+    if (tipoEleccion === 'distrital') {
+      const distritoInfo = await obtenerDistritoMesa(mesaId);
+      if (!distritoInfo || !distritoInfo.tiene_eleccion_distrital) {
+        throw new ErrorNegocio(400, 'Este distrito no tiene elección distrital');
+      }
+    }
+
+    if (estadoActual !== 'pendiente' && estadoActual !== 'observada') {
+      throw new ErrorNegocio(400, `El acta ${tipoEleccion} de esta mesa ya fue procesada (estado: ${estadoActual})`);
     }
 
     const LIMITE_MESA = Number(process.env.MAX_VOTOS_POR_MESA || 300);
@@ -88,7 +114,14 @@ export const subirResultado = async (req, res) => {
         `El total de votos (${totalEmitidos}) no puede superar las cedulas de votacion (${cedulas})`);
     }
 
-    const candidatosValidos = await db('candidatos')
+    let candidatosQuery = db('candidatos').where({ activo: true });
+    if (tipoEleccion === 'distrital') {
+      const distritoInfo = await obtenerDistritoMesa(mesaId);
+      candidatosQuery = candidatosQuery.where({ tipo_eleccion: 'distrital', distrito_id: distritoInfo.distrito_id });
+    } else {
+      candidatosQuery = candidatosQuery.where({ tipo_eleccion: 'provincial' });
+    }
+    const candidatosValidos = await candidatosQuery
       .whereIn('id', listaVotos.map((v) => v.candidato_id))
       .pluck('id');
     if (candidatosValidos.length !== listaVotos.length) {
@@ -96,7 +129,7 @@ export const subirResultado = async (req, res) => {
     }
 
     const anterior = await db('resultados_mesa')
-      .where({ mesa_id: mesaId })
+      .where({ mesa_id: mesaId, tipo_eleccion: tipoEleccion })
       .orderBy('subido_en', 'desc')
       .first();
 
@@ -106,7 +139,8 @@ export const subirResultado = async (req, res) => {
 
     let fotoUrl = anterior?.foto_acta_url || null;
     if (req.file) {
-      fotoUrl = await uploadActaImage(req.file.buffer, req.file.mimetype, mesa.numero_mesa || mesaId);
+      const sufijo = tipoEleccion === 'distrital' ? `${mesa.numero_mesa || mesaId}_distrital` : (mesa.numero_mesa || mesaId);
+      fotoUrl = await uploadActaImage(req.file.buffer, req.file.mimetype, sufijo);
     }
     if (!fotoUrl) {
       throw new ErrorNegocio(400, 'Debe adjuntar la foto del acta');
@@ -117,6 +151,7 @@ export const subirResultado = async (req, res) => {
     const datos = {
       mesa_id: mesaId,
       personero_id: req.user.id,
+      tipo_eleccion: tipoEleccion,
       votos_blanco: blanco,
       votos_nulo: nulo,
       votos_impugnados: impugnados,
@@ -149,8 +184,9 @@ export const subirResultado = async (req, res) => {
         }))
       );
 
-      await trx('mesas_sufragio').where({ id: mesaId })
-        .update({ estado: 'reportada', updated_at: trx.fn.now() });
+      const updateEstado = { updated_at: trx.fn.now() };
+      updateEstado[campoEstado] = 'reportada';
+      await trx('mesas_sufragio').where({ id: mesaId }).update(updateEstado);
 
       return { id: resultadoId, ...datos, detalles: listaVotos };
     });
@@ -170,13 +206,13 @@ export const subirResultado = async (req, res) => {
 
     notifyCoordinator(mesa.local_id, 'resultado:nuevo', {
       mesa_id: mesaId, numero_mesa: mesa.numero_mesa,
-      resultado_id: resultado.id, estado: 'reportada',
+      resultado_id: resultado.id, estado: 'reportada', tipo_eleccion: tipoEleccion,
     });
     notifyAdmin('resultado:nuevo', {
-      mesa_id: mesaId, local_id: mesa.local_id, numero_mesa: mesa.numero_mesa,
+      mesa_id: mesaId, local_id: mesa.local_id, numero_mesa: mesa.numero_mesa, tipo_eleccion: tipoEleccion,
     });
 
-    res.status(201).json({ success: true, data: resultado, message: 'Acta enviada correctamente' });
+    res.status(201).json({ success: true, data: resultado, message: `Acta ${tipoEleccion} enviada correctamente` });
   } catch (error) {
     responderError(res, error, 'Error subiendo el acta');
   }
@@ -197,6 +233,7 @@ export const corregirResultado = async (req, res) => {
     if (!asignacion) throw new ErrorNegocio(403, 'Usted no esta asignado a esta mesa');
 
     req.body.mesa_id = resultado.mesa_id;
+    req.body.tipo_eleccion = resultado.tipo_eleccion;
     return subirResultado(req, res);
   } catch (error) {
     responderError(res, error, 'Error corrigiendo el acta');
@@ -223,6 +260,10 @@ export const verificarResultado = async (req, res) => {
       if (!asignado) throw new ErrorNegocio(403, 'No tiene permisos sobre este local');
     }
 
+    const tipoEleccion = resultado.tipo_eleccion || 'provincial';
+    const campoEstado = tipoEleccion === 'distrital' ? 'estado_distrital' : 'estado';
+    const nuevoEstado = 'verificada';
+
     await db.transaction(async (trx) => {
       await trx('resultados_mesa').where({ id }).update({
         estado: 'verificado',
@@ -230,8 +271,9 @@ export const verificarResultado = async (req, res) => {
         verificado_en: trx.fn.now(),
         updated_at: trx.fn.now(),
       });
-      await trx('mesas_sufragio').where({ id: mesa.id })
-        .update({ estado: 'verificada', updated_at: trx.fn.now() });
+      const updateMesa = { updated_at: trx.fn.now() };
+      updateMesa[campoEstado] = nuevoEstado;
+      await trx('mesas_sufragio').where({ id: mesa.id }).update(updateMesa);
     });
 
     await registrarAuditoria({
@@ -247,15 +289,14 @@ export const verificarResultado = async (req, res) => {
 
     await invalidateDashboard();
 
-    notifyAdmin('resultado:verificado', { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id });
-    notifyCoordinator(mesa.local_id, 'resultado:verificado', { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id });
+    const payload = { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id, tipo_eleccion: tipoEleccion };
+    notifyAdmin('resultado:verificado', payload);
+    notifyCoordinator(mesa.local_id, 'resultado:verificado', payload);
     if (resultado.personero_id) {
-      notifyPersonero(resultado.personero_id, 'resultado:verificado', {
-        mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id,
-      });
+      notifyPersonero(resultado.personero_id, 'resultado:verificado', payload);
     }
 
-    res.json({ success: true, message: 'Acta verificada y aprobada correctamente' });
+    res.json({ success: true, message: `Acta ${tipoEleccion} verificada y aprobada correctamente` });
   } catch (error) {
     responderError(res, error, 'Error verificando el acta');
   }
@@ -287,6 +328,8 @@ export const observarResultado = async (req, res) => {
     }
 
     const motivoTexto = String(observaciones_coordinador).trim();
+    const tipoEleccion = resultado.tipo_eleccion || 'provincial';
+    const campoEstado = tipoEleccion === 'distrital' ? 'estado_distrital' : 'estado';
 
     await db.transaction(async (trx) => {
       await trx('resultados_mesa').where({ id }).update({
@@ -294,8 +337,9 @@ export const observarResultado = async (req, res) => {
         observaciones_coordinador: motivoTexto,
         updated_at: trx.fn.now(),
       });
-      await trx('mesas_sufragio').where({ id: mesa.id })
-        .update({ estado: 'observada', updated_at: trx.fn.now() });
+      const updateMesa = { updated_at: trx.fn.now() };
+      updateMesa[campoEstado] = 'observada';
+      await trx('mesas_sufragio').where({ id: mesa.id }).update(updateMesa);
     });
 
     await registrarAuditoria({
@@ -311,15 +355,11 @@ export const observarResultado = async (req, res) => {
 
     await invalidateDashboard();
 
-    notifyAdmin('resultado:observado', { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id, motivo: motivoTexto });
-    notifyCoordinator(mesa.local_id, 'resultado:observado', { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id, motivo: motivoTexto });
+    const payload = { mesa_id: mesa.id, numero_mesa: mesa.numero_mesa, resultado_id: id, motivo: motivoTexto, tipo_eleccion: tipoEleccion };
+    notifyAdmin('resultado:observado', payload);
+    notifyCoordinator(mesa.local_id, 'resultado:observado', payload);
     if (resultado.personero_id) {
-      notifyPersonero(resultado.personero_id, 'resultado:observado', {
-        mesa_id: mesa.id,
-        numero_mesa: mesa.numero_mesa,
-        resultado_id: id,
-        motivo: motivoTexto,
-      });
+      notifyPersonero(resultado.personero_id, 'resultado:observado', payload);
     }
 
     res.json({ success: true, message: 'Acta declinada/observada. El personero fue notificado para corregirla.' });
@@ -331,6 +371,7 @@ export const observarResultado = async (req, res) => {
 export const getResultadosPorLocal = async (req, res) => {
   try {
     const { localId } = req.params;
+    const tipoEleccion = req.query.tipo_eleccion || 'provincial';
 
     if (req.user.rol !== 'admin') {
       const asignado = await db('asignacion_coordinadores')
@@ -340,7 +381,9 @@ export const getResultadosPorLocal = async (req, res) => {
     }
 
     const filas = await db('mesas_sufragio as m')
-      .leftJoin('resultados_mesa as rm', 'rm.mesa_id', 'm.id')
+      .leftJoin('resultados_mesa as rm', function () {
+        this.on('rm.mesa_id', '=', 'm.id').andOn('rm.tipo_eleccion', '=', db.raw('?', [tipoEleccion]));
+      })
       .leftJoin('asignacion_personeros as ap', function () {
         this.on('ap.mesa_id', '=', 'm.id').andOn('ap.activo', '=', db.raw('true'));
       })
@@ -348,8 +391,10 @@ export const getResultadosPorLocal = async (req, res) => {
       .where('m.local_id', localId)
       .select(
         'm.id as mesa_id', 'm.numero_mesa', 'm.estado as estado_mesa',
+        'm.estado_distrital',
         'm.total_electores_habiles',
         'rm.id as resultado_id', 'rm.estado as estado_resultado',
+        'rm.tipo_eleccion',
         'rm.total_votos_emitidos', 'rm.votos_blanco', 'rm.votos_nulo',
         'rm.votos_impugnados', 'rm.observaciones_coordinador',
         'rm.subido_en', 'rm.version',
@@ -378,6 +423,7 @@ export const getResultadoDetalle = async (req, res) => {
         'm.numero_mesa',
         'm.local_id',
         'm.estado as estado_mesa',
+        'm.estado_distrital',
         'm.total_electores_habiles',
         'm.total_electores_habiles as electores_habiles',
         'rm.total_votos_emitidos as total_votos',
@@ -450,30 +496,52 @@ export const getMiMesa = async (req, res) => {
       .join('locales_votacion as l', 'm.local_id', 'l.id')
       .join('distritos as d', 'l.distrito_id', 'd.id')
       .select('m.*', 'l.nombre as local_nombre', 'l.direccion as local_direccion',
-        'd.nombre as distrito_nombre')
+        'd.nombre as distrito_nombre', 'd.id as distrito_id', 'd.tiene_eleccion_distrital')
       .where('m.id', asignacion.mesa_id)
       .first();
 
-    const resultado = await db('resultados_mesa')
-      .where({ mesa_id: asignacion.mesa_id })
+    const tieneDistrital = mesa.tiene_eleccion_distrital || false;
+
+    const resultadoProvincial = await db('resultados_mesa')
+      .where({ mesa_id: asignacion.mesa_id, tipo_eleccion: 'provincial' })
       .orderBy('subido_en', 'desc')
       .first();
 
-    let detalles = [];
-    if (resultado) {
-      detalles = await db('detalle_resultados as dr')
+    let resultadoDistrital = null;
+    if (tieneDistrital) {
+      resultadoDistrital = await db('resultados_mesa')
+        .where({ mesa_id: asignacion.mesa_id, tipo_eleccion: 'distrital' })
+        .orderBy('subido_en', 'desc')
+        .first();
+    }
+
+    const cargarDetalles = async (resultado) => {
+      if (!resultado) return { resultado: null, detalles: [] };
+      const detalles = await db('detalle_resultados as dr')
         .join('candidatos as c', 'dr.candidato_id', 'c.id')
         .select('dr.candidato_id', 'dr.votos', 'c.nombre_completo', 'c.organizacion_politica')
         .where('dr.resultado_id', resultado.id);
       if (resultado.foto_acta_url) {
         resultado.foto_acta_url_presigned = await getActaUrl(resultado.foto_acta_url);
       }
-    }
+      return { resultado: { ...resultado, detalles }, detalles };
+    };
 
-    const candidatos = await db('candidatos')
-      .where({ activo: true })
+    const provincial = await cargarDetalles(resultadoProvincial);
+    const distrital = await cargarDetalles(resultadoDistrital);
+
+    const candidatosProvinciales = await db('candidatos')
+      .where({ activo: true, tipo_eleccion: 'provincial' })
       .select('id', 'nombre_completo', 'organizacion_politica', 'siglas', 'numero_lista', 'logo_url')
       .orderBy('numero_lista', 'asc');
+
+    let candidatosDistritales = [];
+    if (tieneDistrital) {
+      candidatosDistritales = await db('candidatos')
+        .where({ activo: true, tipo_eleccion: 'distrital', distrito_id: mesa.distrito_id })
+        .select('id', 'nombre_completo', 'organizacion_politica', 'siglas', 'numero_lista', 'logo_url')
+        .orderBy('numero_lista', 'asc');
+    }
 
     res.json({
       success: true,
@@ -485,8 +553,13 @@ export const getMiMesa = async (req, res) => {
           direccion: mesa.local_direccion,
           distrito: mesa.distrito_nombre,
         },
-        resultado: resultado ? { ...resultado, detalles } : null,
-        candidatos,
+        tiene_distrital: tieneDistrital,
+        resultado: provincial.resultado,
+        resultado_provincial: provincial.resultado,
+        resultado_distrital: distrital.resultado,
+        candidatos: candidatosProvinciales,
+        candidatos_provinciales: candidatosProvinciales,
+        candidatos_distritales: candidatosDistritales,
       },
       message: 'Mesa obtenida',
     });

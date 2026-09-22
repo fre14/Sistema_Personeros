@@ -6,24 +6,33 @@ const num = (v) => Number(v || 0);
 
 export const getResumen = async (req, res) => {
   try {
-    const { distrito_id, local_id } = req.query;
+    const { distrito_id, local_id, tipo_eleccion } = req.query;
+    const esDistrital = tipo_eleccion === 'distrital';
+    const campoEstado = esDistrital ? 'estado_distrital' : 'estado';
+    const tipoFiltro = esDistrital ? 'distrital' : 'provincial';
+
     if (distrito_id || local_id) {
-      const clave = `dashboard:resumen:${distrito_id || 'all'}:${local_id || 'all'}`;
+      const clave = esDistrital
+        ? `dashboard:resumen:distrital:${distrito_id || 'all'}:${local_id || 'all'}`
+        : `dashboard:resumen:${distrito_id || 'all'}:${local_id || 'all'}`;
       const data = await cacheWrap(clave, TTL, async () => {
         let mesaQuery = db('mesas_sufragio as m')
           .join('locales_votacion as l', 'm.local_id', 'l.id');
 
+        if (esDistrital) {
+          mesaQuery = mesaQuery.whereNotNull(`m.${campoEstado}`);
+        }
         if (distrito_id) mesaQuery = mesaQuery.where('l.distrito_id', distrito_id);
         if (local_id) mesaQuery = mesaQuery.where('m.local_id', local_id);
 
         const [totalMesas, estadosMesa, totalLocales] = await Promise.all([
           mesaQuery.clone().count('m.id as c').first(),
-          mesaQuery.clone().select('m.estado').count('m.id as c').groupBy('m.estado'),
+          mesaQuery.clone().select(`m.${campoEstado} as estado`).count('m.id as c').groupBy(`m.${campoEstado}`),
           mesaQuery.clone().countDistinct('m.local_id as c').first(),
         ]);
 
         const porEstado = estadosMesa.reduce((acc, row) => {
-          acc[row.estado] = num(row.c);
+          if (row.estado) acc[row.estado] = num(row.c);
           return acc;
         }, {});
 
@@ -34,7 +43,8 @@ export const getResumen = async (req, res) => {
         let votosQuery = db('resultados_mesa as rm')
           .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
           .join('locales_votacion as l', 'm.local_id', 'l.id')
-          .where('rm.estado', 'verificado');
+          .where('rm.estado', 'verificado')
+          .where('rm.tipo_eleccion', tipoFiltro);
 
         if (distrito_id) votosQuery = votosQuery.where('l.distrito_id', distrito_id);
         if (local_id) votosQuery = votosQuery.where('m.local_id', local_id);
@@ -42,6 +52,7 @@ export const getResumen = async (req, res) => {
         const votos = await votosQuery.sum('rm.total_votos_emitidos as s').first();
 
         return {
+          tipo_eleccion: tipoFiltro,
           total_mesas: total,
           mesas_pendientes: porEstado.pendiente || 0,
           mesas_reportadas: reportadas,
@@ -57,33 +68,41 @@ export const getResumen = async (req, res) => {
       return res.json({ success: true, data, message: 'Resumen obtenido' });
     }
 
-    const data = await cacheWrap('dashboard:resumen', TTL, async () => {
+    const data = await cacheWrap(esDistrital ? 'dashboard:resumen:distrital' : 'dashboard:resumen', TTL, async () => {
+      let mesasQueryBase = db('mesas_sufragio');
+      if (esDistrital) {
+        mesasQueryBase = mesasQueryBase.whereNotNull('estado_distrital');
+      }
+
       const [
         totalMesas, estadosMesa, totalPersoneros, personerosAsignados,
         totalLocales, totalCoordinadores, votos,
       ] = await Promise.all([
-        db('mesas_sufragio').count('id as c').first(),
-        db('mesas_sufragio').select('estado').count('id as c').groupBy('estado'),
+        mesasQueryBase.clone().count('id as c').first(),
+        mesasQueryBase.clone().select(`${campoEstado} as estado`).count('id as c').groupBy(campoEstado),
         db('usuarios').where({ rol: 'personero', activo: true }).count('id as c').first(),
         db('asignacion_personeros').where({ activo: true }).count('id as c').first(),
-        db('locales_votacion').count('id as c').first(),
+        esDistrital
+          ? db('locales_votacion as l').join('distritos as d', 'l.distrito_id', 'd.id').where('d.tiene_eleccion_distrital', true).count('l.id as c').first()
+          : db('locales_votacion').count('id as c').first(),
         db('usuarios').where({ rol: 'coordinador', activo: true }).count('id as c').first(),
-        db('resultados_mesa').where({ estado: 'verificado' })
+        db('resultados_mesa').where({ estado: 'verificado', tipo_eleccion: tipoFiltro })
           .sum('total_votos_emitidos as s').first(),
       ]);
 
       const porEstado = estadosMesa.reduce((acc, row) => {
-        acc[row.estado] = num(row.c);
+        if (row.estado) acc[row.estado] = num(row.c);
         return acc;
       }, {});
 
-      const total = num(totalMesas.c);
+      const total = num(totalMesas?.c);
       const verificadas = porEstado.verificada || 0;
       const reportadas = porEstado.reportada || 0;
-      const personeros = num(totalPersoneros.c);
-      const asignados = num(personerosAsignados.c);
+      const personeros = num(totalPersoneros?.c);
+      const asignados = num(personerosAsignados?.c);
 
       return {
+        tipo_eleccion: tipoFiltro,
         total_mesas: total,
         mesas_pendientes: porEstado.pendiente || 0,
         mesas_reportadas: reportadas,
@@ -92,11 +111,11 @@ export const getResumen = async (req, res) => {
         total_personeros: personeros,
         personeros_asignados: asignados,
         personeros_sin_asignar: Math.max(personeros - asignados, 0),
-        total_coordinadores: num(totalCoordinadores.c),
-        total_locales: num(totalLocales.c),
+        total_coordinadores: num(totalCoordinadores?.c),
+        total_locales: num(totalLocales?.c),
         porcentaje_avance: total ? Number(((verificadas / total) * 100).toFixed(2)) : 0,
         porcentaje_procesado: total ? Number((((verificadas + reportadas) / total) * 100).toFixed(2)) : 0,
-        total_votos_contados: num(votos.s),
+        total_votos_contados: num(votos?.s),
         actualizado_en: new Date().toISOString(),
       };
     });
@@ -109,14 +128,19 @@ export const getResumen = async (req, res) => {
 
 export const getComposicionVoto = async (req, res) => {
   try {
-    const { distrito_id, local_id } = req.query;
-    const clave = `dashboard:composicion:${distrito_id || 'all'}:${local_id || 'all'}`;
+    const { distrito_id, local_id, tipo_eleccion } = req.query;
+    const esDistrital = tipo_eleccion === 'distrital';
+    const tipoFiltro = esDistrital ? 'distrital' : 'provincial';
+    const clave = esDistrital
+      ? `dashboard:composicion:distrital:${distrito_id || 'all'}:${local_id || 'all'}`
+      : `dashboard:composicion:${distrito_id || 'all'}:${local_id || 'all'}`;
 
     const data = await cacheWrap(clave, TTL, async () => {
       let query = db('resultados_mesa as rm')
         .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
         .join('locales_votacion as l', 'm.local_id', 'l.id')
-        .where('rm.estado', 'verificado');
+        .where('rm.estado', 'verificado')
+        .where('rm.tipo_eleccion', tipoFiltro);
 
       if (distrito_id) query = query.where('l.distrito_id', distrito_id);
       if (local_id) query = query.where('m.local_id', local_id);
@@ -135,6 +159,7 @@ export const getComposicionVoto = async (req, res) => {
       const validos = Math.max(0, emitidos - blanco - nulo - impugnados);
 
       return {
+        tipo_eleccion: tipoFiltro,
         total_emitidos: emitidos,
         votos_validos: validos,
         votos_blanco: blanco,
@@ -155,8 +180,12 @@ export const getComposicionVoto = async (req, res) => {
 
 export const getResultadosPorCandidato = async (req, res) => {
   try {
-    const { distrito_id, local_id } = req.query;
-    const clave = `dashboard:candidatos:${distrito_id || 'all'}:${local_id || 'all'}`;
+    const { distrito_id, local_id, tipo_eleccion } = req.query;
+    const esDistrital = tipo_eleccion === 'distrital';
+    const tipoFiltro = esDistrital ? 'distrital' : 'provincial';
+    const clave = esDistrital
+      ? `dashboard:candidatos:distrital:${distrito_id || 'all'}:${local_id || 'all'}`
+      : `dashboard:candidatos:${distrito_id || 'all'}:${local_id || 'all'}`;
 
     const data = await cacheWrap(clave, TTL, async () => {
       let query = db('detalle_resultados as dr')
@@ -165,11 +194,18 @@ export const getResultadosPorCandidato = async (req, res) => {
         .join('locales_votacion as l', 'm.local_id', 'l.id')
         .join('candidatos as c', 'dr.candidato_id', 'c.id')
         .where('rm.estado', 'verificado')
-        .select('c.id', 'c.nombre_completo', 'c.organizacion_politica', 'c.siglas', 'c.numero_lista')
+        .where('rm.tipo_eleccion', tipoFiltro)
+        .where('c.tipo_eleccion', tipoFiltro)
+        .select('c.id', 'c.nombre_completo', 'c.organizacion_politica', 'c.siglas', 'c.numero_lista', 'c.distrito_id')
         .sum('dr.votos as total_votos')
-        .groupBy('c.id', 'c.nombre_completo', 'c.organizacion_politica', 'c.siglas', 'c.numero_lista');
+        .groupBy('c.id', 'c.nombre_completo', 'c.organizacion_politica', 'c.siglas', 'c.numero_lista', 'c.distrito_id');
 
-      if (distrito_id) query = query.where('l.distrito_id', distrito_id);
+      if (distrito_id) {
+        query = query.where('l.distrito_id', distrito_id);
+        if (esDistrital) {
+          query = query.where('c.distrito_id', distrito_id);
+        }
+      }
       if (local_id) query = query.where('m.local_id', local_id);
 
       const filas = await query.orderBy('total_votos', 'desc');
@@ -190,23 +226,47 @@ export const getResultadosPorCandidato = async (req, res) => {
 
 export const getResultadosPorDistrito = async (req, res) => {
   try {
-    const data = await cacheWrap('dashboard:distritos', TTL, async () => {
-      const filas = await db('distritos as d')
+    const { tipo_eleccion } = req.query;
+    const esDistrital = tipo_eleccion === 'distrital';
+    const tipoFiltro = esDistrital ? 'distrital' : 'provincial';
+    const campoEstado = esDistrital ? 'estado_distrital' : 'estado';
+    const clave = esDistrital ? 'dashboard:distritos:distrital' : 'dashboard:distritos';
+
+    const data = await cacheWrap(clave, TTL, async () => {
+      let distritosQuery = db('distritos as d');
+      if (esDistrital) {
+        distritosQuery = distritosQuery.where('d.tiene_eleccion_distrital', true);
+      }
+
+      const filas = await distritosQuery
         .leftJoin('locales_votacion as l', 'l.distrito_id', 'd.id')
-        .leftJoin('mesas_sufragio as m', 'm.local_id', 'l.id')
-        .leftJoin('resultados_mesa as rm', function () {
-          this.on('rm.mesa_id', '=', 'm.id').andOn('rm.estado', '=', db.raw('?', ['verificado']));
+        .leftJoin('mesas_sufragio as m', function () {
+          this.on('m.local_id', '=', 'l.id');
+          if (esDistrital) {
+            this.andOn(db.raw('m.estado_distrital IS NOT NULL'));
+          }
         })
-        .select('d.id', 'd.nombre', 'd.codigo')
+        .leftJoin('resultados_mesa as rm', function () {
+          this.on('rm.mesa_id', '=', 'm.id')
+            .andOn('rm.estado', '=', db.raw('?', ['verificado']))
+            .andOn('rm.tipo_eleccion', '=', db.raw('?', [tipoFiltro]));
+        })
+        .select('d.id', 'd.nombre', 'd.codigo', 'd.tiene_eleccion_distrital')
         .count('m.id as total_mesas')
         .countDistinct('l.id as total_locales')
         .sum('rm.total_votos_emitidos as votos_contados')
-        .groupBy('d.id', 'd.nombre', 'd.codigo')
+        .groupBy('d.id', 'd.nombre', 'd.codigo', 'd.tiene_eleccion_distrital')
         .orderBy('d.nombre', 'asc');
 
-      const verificadasPorDistrito = await db('mesas_sufragio as m')
+      let verifQuery = db('mesas_sufragio as m')
         .join('locales_votacion as l', 'm.local_id', 'l.id')
-        .where('m.estado', 'verificada')
+        .where(`m.${campoEstado}`, 'verificada');
+
+      if (esDistrital) {
+        verifQuery = verifQuery.whereNotNull('m.estado_distrital');
+      }
+
+      const verificadasPorDistrito = await verifQuery
         .select('l.distrito_id')
         .count('m.id as c')
         .groupBy('l.distrito_id');
@@ -223,6 +283,7 @@ export const getResultadosPorDistrito = async (req, res) => {
           id: f.id,
           nombre: f.nombre,
           codigo: f.codigo,
+          tiene_eleccion_distrital: f.tiene_eleccion_distrital,
           total_locales: num(f.total_locales),
           total_mesas: totalMesas,
           mesas_verificadas: verificadas,
@@ -240,30 +301,51 @@ export const getResultadosPorDistrito = async (req, res) => {
 
 export const getResultadosPorLocal = async (req, res) => {
   try {
-    const { distrito_id } = req.query;
-    const clave = `dashboard:locales:${distrito_id || 'all'}`;
+    const { distrito_id, tipo_eleccion } = req.query;
+    const esDistrital = tipo_eleccion === 'distrital';
+    const tipoFiltro = esDistrital ? 'distrital' : 'provincial';
+    const campoEstado = esDistrital ? 'estado_distrital' : 'estado';
+    const clave = esDistrital
+      ? `dashboard:locales:distrital:${distrito_id || 'all'}`
+      : `dashboard:locales:${distrito_id || 'all'}`;
 
     const data = await cacheWrap(clave, TTL, async () => {
       let base = db('locales_votacion as l')
         .join('distritos as d', 'l.distrito_id', 'd.id')
-        .leftJoin('mesas_sufragio as m', 'm.local_id', 'l.id')
-        .select('l.id', 'l.nombre', 'l.direccion', 'd.nombre as distrito_nombre')
+        .leftJoin('mesas_sufragio as m', function () {
+          this.on('m.local_id', '=', 'l.id');
+          if (esDistrital) {
+            this.andOn(db.raw('m.estado_distrital IS NOT NULL'));
+          }
+        })
+        .select('l.id', 'l.nombre', 'l.direccion', 'd.nombre as distrito_nombre', 'd.tiene_eleccion_distrital')
         .count('m.id as total_mesas')
-        .groupBy('l.id', 'l.nombre', 'l.direccion', 'd.nombre')
+        .groupBy('l.id', 'l.nombre', 'l.direccion', 'd.nombre', 'd.tiene_eleccion_distrital')
         .orderBy('l.nombre', 'asc');
 
+      if (esDistrital) {
+        base = base.where('d.tiene_eleccion_distrital', true);
+      }
       if (distrito_id) base = base.where('l.distrito_id', distrito_id);
 
       const locales = await base;
 
-      const porEstado = await db('mesas_sufragio as m')
-        .select('m.local_id', 'm.estado')
+      let mesasQuery = db('mesas_sufragio as m')
+        .select('m.local_id', `m.${campoEstado} as estado`)
         .count('m.id as c')
-        .groupBy('m.local_id', 'm.estado');
+        .groupBy('m.local_id', `m.${campoEstado}`);
+
+      if (esDistrital) {
+        mesasQuery = mesasQuery.whereNotNull('m.estado_distrital');
+      }
+
+      const porEstado = await mesasQuery;
 
       const mapa = porEstado.reduce((acc, r) => {
-        acc[r.local_id] = acc[r.local_id] || {};
-        acc[r.local_id][r.estado] = num(r.c);
+        if (r.estado) {
+          acc[r.local_id] = acc[r.local_id] || {};
+          acc[r.local_id][r.estado] = num(r.c);
+        }
         return acc;
       }, {});
 
@@ -272,6 +354,7 @@ export const getResultadosPorLocal = async (req, res) => {
         const resVotos = await db('resultados_mesa as rm')
           .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
           .where('rm.estado', 'verificado')
+          .where('rm.tipo_eleccion', tipoFiltro)
           .select('m.local_id')
           .sum('rm.total_votos_emitidos as votos')
           .groupBy('m.local_id');
@@ -310,7 +393,9 @@ export const getResultadosPorLocal = async (req, res) => {
 
 export const getMesasPendientes = async (req, res) => {
   try {
-    const { distrito_id, local_id, limit = 200 } = req.query;
+    const { distrito_id, local_id, limit = 200, tipo_eleccion } = req.query;
+    const esDistrital = tipo_eleccion === 'distrital';
+    const campoEstado = esDistrital ? 'estado_distrital' : 'estado';
 
     let query = db('mesas_sufragio as m')
       .join('locales_votacion as l', 'm.local_id', 'l.id')
@@ -319,9 +404,9 @@ export const getMesasPendientes = async (req, res) => {
         this.on('ap.mesa_id', '=', 'm.id').andOn('ap.activo', '=', db.raw('true'));
       })
       .leftJoin('usuarios as u', 'ap.usuario_id', 'u.id')
-      .where('m.estado', 'pendiente')
+      .where(`m.${campoEstado}`, 'pendiente')
       .select(
-        'm.id', 'm.numero_mesa', 'm.estado', 'm.total_electores_habiles',
+        'm.id', 'm.numero_mesa', `m.${campoEstado} as estado`, 'm.total_electores_habiles',
         'l.id as local_id', 'l.nombre as local_nombre',
         'd.nombre as distrito_nombre',
         'u.dni as personero_dni',
@@ -331,6 +416,9 @@ export const getMesasPendientes = async (req, res) => {
       .orderBy('m.numero_mesa', 'asc')
       .limit(Number(limit) || 200);
 
+    if (esDistrital) {
+      query = query.whereNotNull('m.estado_distrital').where('d.tiene_eleccion_distrital', true);
+    }
     if (distrito_id) query = query.where('l.distrito_id', distrito_id);
     if (local_id) query = query.where('m.local_id', local_id);
 

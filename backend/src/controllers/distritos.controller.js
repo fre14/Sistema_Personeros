@@ -42,8 +42,29 @@ export const update = async (req, res) => {
     const { id } = req.params;
     const oldData = await db('distritos').where({ id }).first();
     if (!oldData) return res.status(404).json({ success: false, message: 'Distrito no encontrado' });
-    
-    await db('distritos').where({ id }).update(req.body);
+
+    await db.transaction(async (trx) => {
+      await trx('distritos').where({ id }).update(req.body);
+
+      if (req.body.tiene_eleccion_distrital !== undefined && req.body.tiene_eleccion_distrital !== oldData.tiene_eleccion_distrital) {
+        const locales = await trx('locales_votacion').where({ distrito_id: id }).select('id');
+        const localIds = locales.map(l => l.id);
+
+        if (localIds.length > 0) {
+          if (req.body.tiene_eleccion_distrital) {
+            await trx('mesas_sufragio')
+              .whereIn('local_id', localIds)
+              .whereNull('estado_distrital')
+              .update({ estado_distrital: 'pendiente' });
+          } else {
+            await trx('mesas_sufragio')
+              .whereIn('local_id', localIds)
+              .update({ estado_distrital: null });
+          }
+        }
+      }
+    });
+
     const distrito = await db('distritos').where({ id }).first();
     await registrarAuditoria('distritos', 'update', req.user.id, distrito, req.body, oldData);
     res.json({ success: true, data: distrito, message: 'Distrito actualizado' });
