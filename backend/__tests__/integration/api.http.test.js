@@ -591,6 +591,55 @@ describe('Flujo completo del acta sobre HTTP', () => {
 
     expect(res.status).toBe(200);
   });
+  describe('Descargas y Elecciones Distritales sobre HTTP', () => {
+    it('GET /api/descargas/provincial exige rol admin', async () => {
+      const res = await request(app)
+        .get('/api/descargas/provincial').set(...auth(TOKEN_PERSONERO));
+      expect(res.status).toBe(403);
+    });
+
+    it('GET /api/descargas/distrital exige rol admin', async () => {
+      const res = await request(app)
+        .get('/api/descargas/distrital').set(...auth(TOKEN_COORD));
+      expect(res.status).toBe(403);
+    });
+
+    it('GET /api/descargas/completa responde con zip para admin', async () => {
+      mockDb.queue('resultados_mesa', []);
+      const res = await request(app)
+        .get('/api/descargas/completa').set(...auth(TOKEN_ADMIN));
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/zip/);
+    });
+
+    it('un personero puede subir un acta distrital con multipart', async () => {
+      mockDb.queue('asignacion_personeros', { id: 78, mesa_id: 10, activo: true });
+      mockDb.queue('mesas_sufragio', { id: 10, numero_mesa: '005678', local_id: 2, estado_distrital: 'pendiente', total_electores_habiles: 300 });
+      mockDb.queue('mesas_sufragio', { distrito_id: 2, tiene_eleccion_distrital: true });
+      mockDb.queue('candidatos', [10]);
+      mockDb.queue('resultados_mesa', undefined);
+      mockDb.queue('resultados_mesa', [{ id: 600 }]);
+      mockDb.queue('detalle_resultados', 1);
+      mockDb.queue('mesas_sufragio', 1);
+
+      const res = await request(app)
+        .post('/api/resultados').set(...auth(TOKEN_PERSONERO))
+        .field('mesa_id', '10')
+        .field('tipo_eleccion', 'distrital')
+        .field('votos', JSON.stringify([
+          { candidato_id: 10, votos: 45 }
+        ]))
+        .field('votos_blanco', '2')
+        .field('votos_nulo', '1')
+        .field('votos_impugnados', '0')
+        .attach('foto_acta', Buffer.from('imagen-acta-distrital'), {
+          filename: 'acta_distrital.jpg', contentType: 'image/jpeg',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.tipo_eleccion).toBe('distrital');
+    });
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════

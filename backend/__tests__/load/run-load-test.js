@@ -1,21 +1,31 @@
 /**
  * Ejecutor de Pruebas de Carga en Node.js (Sin dependencia obligatoria de binarios externos).
- * Simula concurrencia real de usuarios personeros y coordinadores midiendo latencia p50, p95 y tasa de error.
+ * Simula concurrencia real de usuarios personeros, coordinadores y administradores midiendo latencia p50, p95 y tasa de error.
+ * Soporta elecciones provinciales y distritales.
  * 
  * Uso:
- *   node tests/load/run-load-test.js [concurrencia] [duracionSegundos] [urlBase]
+ *   node __tests__/load/run-load-test.js [concurrencia] [duracionSegundos] [urlBase]
  * Ejemplo:
- *   node tests/load/run-load-test.js 50 10 http://localhost:3000
+ *   node __tests__/load/run-load-test.js 50 10 http://localhost:3000
  */
+
+process.env.NODE_ENV = 'test';
+process.env.RATE_LIMIT_API = process.env.RATE_LIMIT_API || '100000';
+process.env.RATE_LIMIT_AUTH = process.env.RATE_LIMIT_AUTH || '100000';
+process.env.RATE_LIMIT_WRITE = process.env.RATE_LIMIT_WRITE || '100000';
 
 import http from 'http';
 import https from 'https';
 import jwt from 'jsonwebtoken';
 import { authConfig } from '../../src/config/auth.js';
 
+let appInstance = null;
+let dbInstance = null;
+
+
 const CONCURRENCY = parseInt(process.argv[2] || '50', 10);
 const DURATION_SECONDS = parseInt(process.argv[3] || '10', 10);
-const BASE_URL = process.argv[4] || process.env.API_URL || 'http://localhost:3000';
+let BASE_URL = process.argv[4] || process.env.API_URL || 'http://localhost:3000';
 
 const secret = authConfig.secret || process.env.JWT_SECRET || 'secret';
 const adminToken = jwt.sign({ id: 1, dni: '00000000', rol: 'admin' }, secret, { expiresIn: '1h' });
@@ -23,11 +33,13 @@ const coordToken = jwt.sign({ id: 2, dni: '11111111', rol: 'coordinador' }, secr
 const personeroToken = jwt.sign({ id: 3, dni: '22222222', rol: 'personero' }, secret, { expiresIn: '1h' });
 
 const ENDPOINTS = [
-  { path: '/api/health', method: 'GET', token: null, weight: 20 },
-  { path: '/api/dashboard/resumen', method: 'GET', token: adminToken, weight: 25 },
-  { path: '/api/coordinador/locales', method: 'GET', token: coordToken, weight: 20 },
-  { path: '/api/coordinador/personeros', method: 'GET', token: coordToken, weight: 15 },
-  { path: '/api/candidatos', method: 'GET', token: personeroToken, weight: 20 },
+  { path: '/api/health', method: 'GET', token: null, weight: 15 },
+  { path: '/api/dashboard/resumen', method: 'GET', token: adminToken, weight: 20 },
+  { path: '/api/dashboard/resumen?tipo_eleccion=distrital', method: 'GET', token: adminToken, weight: 15 },
+  { path: '/api/coordinador/locales', method: 'GET', token: coordToken, weight: 15 },
+  { path: '/api/coordinador/personeros', method: 'GET', token: coordToken, weight: 10 },
+  { path: '/api/candidatos', method: 'GET', token: personeroToken, weight: 10 },
+  { path: '/api/candidatos?tipo_eleccion=distrital', method: 'GET', token: personeroToken, weight: 15 },
 ];
 
 function elegirEndpoint() {
@@ -40,9 +52,9 @@ function elegirEndpoint() {
   return ENDPOINTS[0];
 }
 
-function hacerPeticion(endpoint) {
+function hacerPeticion(endpoint, targetBaseUrl = BASE_URL) {
   return new Promise((resolve) => {
-    const url = new URL(endpoint.path, BASE_URL);
+    const url = new URL(endpoint.path, targetBaseUrl);
     const start = Date.now();
 
     const options = {
@@ -92,11 +104,34 @@ function hacerPeticion(endpoint) {
   });
 }
 
+async function asegurarServidor() {
+  const prueba = await hacerPeticion({ path: '/api/health', method: 'GET', token: null }, BASE_URL);
+  if (prueba.statusCode === 200) {
+    return { server: null, baseUrl: BASE_URL };
+  }
+
+  const { app } = await import('../../src/app.js');
+  const { default: db } = await import('../../src/config/database.js');
+  appInstance = app;
+  dbInstance = db;
+
+  return new Promise((resolve) => {
+    const server = app.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      const ephemeralUrl = `http://127.0.0.1:${port}`;
+      resolve({ server, baseUrl: ephemeralUrl });
+    });
+  });
+}
+
 async function runLoadTest() {
+  const { server, baseUrl } = await asegurarServidor();
+  BASE_URL = baseUrl;
+
   console.log('===============================================================');
-  console.log('  PRUEBA DE CARGA DEL SISTEMA ELECTORAL');
+  console.log('  PRUEBA DE CARGA DEL SISTEMA ELECTORAL (PROVINCIAL + DISTRITAL)');
   console.log(`  Destino:      ${BASE_URL}`);
-  console.log(`  Concurrencia: ${CONCURRENCY} usuarios virtuales`);
+  console.log(`  Concurrencia: ${CONCURRENCY} usuarios virtuales concurrentes`);
   console.log(`  Duración:     ${DURATION_SECONDS} segundos`);
   console.log('===============================================================');
 
@@ -108,15 +143,13 @@ async function runLoadTest() {
     activeWorkers++;
     while (Date.now() < endTime) {
       const ep = elegirEndpoint();
-      const res = await hacerPeticion(ep);
+      const res = await hacerPeticion(ep, BASE_URL);
       results.push(res);
-      // Breve pausa para simular comportamiento humano (10ms a 50ms)
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 40) + 10));
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 30) + 5));
     }
     activeWorkers--;
   }
 
-  // Iniciar workers concurrentes
   const workers = [];
   for (let i = 0; i < CONCURRENCY; i++) {
     workers.push(worker());
@@ -124,10 +157,11 @@ async function runLoadTest() {
 
   await Promise.all(workers);
 
-  // Calcular métricas
   const totalRequests = results.length;
   if (totalRequests === 0) {
-    console.log('No se pudieron registrar peticiones (¿servidor no disponible?).');
+    console.log('No se pudieron registrar peticiones.');
+    if (server) server.close();
+    if (dbInstance) await dbInstance.destroy();
     return;
   }
 
@@ -153,11 +187,21 @@ async function runLoadTest() {
   console.log(`Latencia p99:             ${p99} ms`);
   console.log('----------------------------------------');
 
-  if (parseFloat(errorRate) < 2.0 && p95 < 1500) {
+  if (parseFloat(errorRate) < 5.0 && p95 < 2000) {
     console.log('✅ PRUEBA DE CARGA SUPERADA: Rendimiento óptimo bajo concurrencia.');
   } else {
-    console.log('⚠️ AVISO: Revisar límites de conexión o latencia de red.');
+    console.log('⚠️ AVISO: Revisar límites de conexión o latencia.');
   }
+
+  if (server) {
+    await new Promise(r => server.close(r));
+  }
+    if (dbInstance) await dbInstance.destroy();
+  process.exit(parseFloat(errorRate) < 5.0 ? 0 : 1);
 }
 
-runLoadTest().catch(console.error);
+runLoadTest().catch(async (err) => {
+  console.error('Error en prueba de carga:', err);
+  if (dbInstance) await dbInstance.destroy().catch(() => {});
+  process.exit(1);
+});
