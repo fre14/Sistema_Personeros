@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 import {
   createDbMock, crearReq, crearRes, usuarioAdmin, silenciarConsola,
-} from '../support/knex-mock.js';
+} from '../../setup/knex-mock.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // Controladores CRUD: usuarios, candidatos, distritos, locales, mesas.
@@ -14,15 +14,15 @@ const registrarAuditoria = jest.fn().mockResolvedValue(undefined);
 const hash = jest.fn().mockResolvedValue('$2a$12$hashsimulado');
 const compare = jest.fn();
 
-jest.unstable_mockModule('../../src/config/database.js', () => ({ default: mockDb.db }));
-jest.unstable_mockModule('../../src/services/auditoria.service.js', () => ({ registrarAuditoria }));
+jest.unstable_mockModule('../../../src/config/database.js', () => ({ default: mockDb.db }));
+jest.unstable_mockModule('../../../src/services/auditoria.service.js', () => ({ registrarAuditoria }));
 jest.unstable_mockModule('bcryptjs', () => ({ default: { hash, compare }, hash, compare }));
 
-const usuarios = await import('../../src/controllers/usuarios.controller.js');
-const candidatos = await import('../../src/controllers/candidatos.controller.js');
-const distritos = await import('../../src/controllers/distritos.controller.js');
-const locales = await import('../../src/controllers/locales.controller.js');
-const mesas = await import('../../src/controllers/mesas.controller.js');
+const usuarios = await import('../../../src/controllers/usuarios.controller.js');
+const candidatos = await import('../../../src/controllers/candidatos.controller.js');
+const distritos = await import('../../../src/controllers/distritos.controller.js');
+const locales = await import('../../../src/controllers/locales.controller.js');
+const mesas = await import('../../../src/controllers/mesas.controller.js');
 
 beforeEach(() => {
   jest.clearAllMocks();

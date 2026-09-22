@@ -10,13 +10,6 @@ let adapterActivo = false;
 
 const MAX_SOCKETS_POR_USUARIO = Number(process.env.WS_MAX_SOCKETS_PER_USER || 3);
 
-/**
- * Inicializa Socket.io.
- *
- * El punto critico es el adapter de Redis: sin el, una notificacion emitida
- * por el backend-1 nunca llega a los usuarios conectados al backend-2, asi
- * que con balanceo de carga la mitad de los personeros no veria nada.
- */
 export const setupWebSocket = async (server, allowedOrigins = []) => {
   io = new Server(server, {
     cors: {
@@ -77,9 +70,7 @@ export const setupWebSocket = async (server, allowedOrigins = []) => {
         const sobrante = sockets.slice(0, sockets.length - MAX_SOCKETS_POR_USUARIO + 1);
         sobrante.forEach((s) => s.disconnect(true));
       }
-    } catch {
-      /* si falla el conteo, no bloquear la conexion */
-    }
+    } catch {}
 
     socket.join(`user:${id}`);
 
@@ -107,9 +98,7 @@ export const setupWebSocket = async (server, allowedOrigins = []) => {
           .where({ usuario_id: id, local_id: localId, activo: true })
           .first();
         if (asignado) socket.join(`local:${localId}`);
-      } catch {
-        /* ignorar */
-      }
+      } catch {}
     });
 
     socket.on('leave_local', (localId) => socket.leave(`local:${localId}`));

@@ -2,23 +2,9 @@ import knex from 'knex';
 import dotenv from 'dotenv';
 dotenv.config();
 
-/**
- * Conexion a PostgreSQL.
- *
- * El pool por defecto de la version anterior era min 2 / max 20. Con 800
- * usuarios concurrentes esas 20 conexiones se agotan y las peticiones se
- * quedan esperando hasta fallar por timeout. Aqui el tamano se controla por
- * variable de entorno para poder ajustarlo sin tocar codigo.
- *
- * Regla practica: DB_POOL_MAX x numero_de_instancias <= max_connections de
- * PostgreSQL (menos un margen para tareas administrativas). Con PgBouncer
- * delante, el limite real lo pone PgBouncer y se puede subir sin miedo.
- */
-
 const usaSSL = (valor) => {
   if (String(process.env.DB_SSL || '').toLowerCase() === 'false') return false;
   if (String(process.env.DB_SSL || '').toLowerCase() === 'true') return { rejectUnauthorized: false };
-  // Autodeteccion: solo SSL si la base es remota
   if (!valor) return false;
   const local = valor.includes('localhost') || valor.includes('127.0.0.1') ||
                 valor.includes('postgres') || valor.includes('pgbouncer');
@@ -56,8 +42,6 @@ const db = knex({
   acquireConnectionTimeout: Number(process.env.DB_ACQUIRE_TIMEOUT || 10000),
 });
 
-// Aviso temprano de saturacion: si aparece en los logs, hay que subir el pool
-// o activar PgBouncer antes de que la jornada llegue al pico.
 if (process.env.NODE_ENV === 'production') {
   setInterval(() => {
     const pool = db.client?.pool;

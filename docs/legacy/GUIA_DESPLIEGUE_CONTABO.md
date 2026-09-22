@@ -1,6 +1,8 @@
-# Guía de despliegue en Contabo
+# Guía de despliegue en Contabo (Legacy / Alternativa Económica)
 
-Para 800–1500 usuarios simultáneos. Tiempo estimado: 45–60 minutos.
+> **NOTA:** Esta guía corresponde a una alternativa en VPS único (Contabo). La arquitectura oficial y presupuestada para el sistema es **AWS Cloud (ECS Fargate + ALB + RDS + ElastiCache + S3 + CloudFront)**. Para la guía oficial de despliegue en AWS, consulte [GUIA_DESPLIEGUE_AWS.md](../GUIA_DESPLIEGUE_AWS.md).
+
+Para 800–1500 usuarios simultáneos en VPS dedicado. Tiempo estimado: 45–60 minutos.
 
 ---
 

@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { app } from '../../src/app.js';
 import db from '../../src/config/database.js';
-import { generateAdminToken, generateCoordinadorToken, generatePersoneroToken } from '../helpers.js';
+import { generateAdminToken, generateCoordinadorToken, generatePersoneroToken } from '../setup/helpers.js';
 
 describe('Integración: Flujo y Supervisión de Coordinadores y Personeros', () => {
   let adminToken;

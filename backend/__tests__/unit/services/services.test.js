@@ -5,7 +5,7 @@ const mockDb = jest.fn(() => ({
   insert: mockInsert,
 }));
 
-jest.unstable_mockModule('../../src/config/database.js', () => ({
+jest.unstable_mockModule('../../../src/config/database.js', () => ({
   default: mockDb,
 }));
 
@@ -23,7 +23,7 @@ let supabaseInstance = {
   },
 };
 
-jest.unstable_mockModule('../../src/config/storage.js', () => ({
+jest.unstable_mockModule('../../../src/config/storage.js', () => ({
   get supabase() { return supabaseInstance; },
   bucketName: 'actas',
   storageConfig: { driver: 'supabase', localPath: '/tmp', publicUrl: '/actas' },
@@ -37,7 +37,7 @@ jest.unstable_mockModule('jsonwebtoken', () => ({
   default: { sign: jest.fn(), verify: jest.fn() },
 }));
 
-jest.unstable_mockModule('../../src/config/auth.js', () => ({
+jest.unstable_mockModule('../../../src/config/auth.js', () => ({
   authConfig: {},
 }));
 
@@ -45,9 +45,9 @@ jest.unstable_mockModule('uuid', () => ({
   v4: jest.fn(() => '1234-5678-9012'),
 }));
 
-const { registrarAuditoria } = await import('../../src/services/auditoria.service.js');
-const { setupWebSocket, notifyCoordinator, notifyAdmin, notifyPersonero, getIo } = await import('../../src/services/websocket.service.js');
-const { uploadActaImage, getActaUrl, deleteActaImage } = await import('../../src/services/storage.service.js');
+const { registrarAuditoria } = await import('../../../src/services/auditoria.service.js');
+const { setupWebSocket, notifyCoordinator, notifyAdmin, notifyPersonero, getIo } = await import('../../../src/services/websocket.service.js');
+const { uploadActaImage, getActaUrl, deleteActaImage } = await import('../../../src/services/storage.service.js');
 
 describe('Services Unit Tests', () => {
   beforeEach(() => {

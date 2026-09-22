@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
-import { authenticateToken, requireRole } from '../../src/middlewares/auth.middleware.js';
-import { generateAdminToken, generatePersoneroToken, generateCoordinadorToken, generateToken, mockRequest, mockResponse } from '../helpers.js';
+import { authenticateToken, requireRole } from '../../../src/middlewares/auth.middleware.js';
+import { generateAdminToken, generatePersoneroToken, generateCoordinadorToken, generateToken, mockRequest, mockResponse } from '../../setup/helpers.js';
 import jwt from 'jsonwebtoken';
 
 describe('Auth Middleware', () => {

@@ -1,11 +1,11 @@
-import { loginSchema } from '../../src/validations/auth.validation.js';
-import { createUsuarioSchema, updateUsuarioSchema } from '../../src/validations/usuario.validation.js';
-import { subirResultadoSchema, observarResultadoSchema } from '../../src/validations/resultado.validation.js';
-import { asignarPersoneroSchema, asignarCoordinadorSchema, reasignarSchema } from '../../src/validations/asignacion.validation.js';
-import { createCandidatoSchema, updateCandidatoSchema } from '../../src/validations/candidato.validation.js';
-import { createLocalSchema, updateLocalSchema } from '../../src/validations/local.validation.js';
-import { createMesaSchema, updateMesaSchema } from '../../src/validations/mesa.validation.js';
-import { createDistritoSchema, updateDistritoSchema } from '../../src/validations/distrito.validation.js';
+import { loginSchema } from '../../../src/validations/auth.validation.js';
+import { createUsuarioSchema, updateUsuarioSchema } from '../../../src/validations/usuario.validation.js';
+import { subirResultadoSchema, observarResultadoSchema } from '../../../src/validations/resultado.validation.js';
+import { asignarPersoneroSchema, asignarCoordinadorSchema, reasignarSchema } from '../../../src/validations/asignacion.validation.js';
+import { createCandidatoSchema, updateCandidatoSchema } from '../../../src/validations/candidato.validation.js';
+import { createLocalSchema, updateLocalSchema } from '../../../src/validations/local.validation.js';
+import { createMesaSchema, updateMesaSchema } from '../../../src/validations/mesa.validation.js';
+import { createDistritoSchema, updateDistritoSchema } from '../../../src/validations/distrito.validation.js';
 
 describe('Validaciones Zod', () => {
 

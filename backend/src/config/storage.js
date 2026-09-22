@@ -2,17 +2,6 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 dotenv.config();
 
-/**
- * Configuracion del almacenamiento de actas.
- *
- * driver 'local'    -> guarda en disco del servidor (volumen compartido).
- *                      No depende de servicios externos ni de internet.
- * driver 'supabase' -> guarda en Supabase Storage.
- *
- * Si se pide supabase pero faltan credenciales, se cae a 'local' en vez de
- * romper la carga de actas en plena jornada.
- */
-
 const pedido = (process.env.STORAGE_DRIVER || 'local').toLowerCase();
 
 const supabaseUrl = process.env.SUPABASE_URL;

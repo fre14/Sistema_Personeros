@@ -1,18 +1,6 @@
 import db from '../config/database.js';
 import { cacheWrap } from '../services/cache.service.js';
 
-/**
- * Dashboard en tiempo real.
- *
- * Correcciones respecto a la version anterior:
- *  - Consultaba las tablas "mesas" y "locales", que no existen (el esquema
- *    real usa mesas_sufragio y locales_votacion). Dependia de un script
- *    manual que creaba vistas; si no se ejecutaba, el dashboard fallaba.
- *  - Los reportes por distrito y por local devolvian [] siempre.
- *  - La auditoria ordenaba por "created_at", columna que no existe (es "fecha").
- *  - Cada refresco lanzaba 6 agregaciones sin cache.
- */
-
 const TTL = Number(process.env.CACHE_TTL_SECONDS || 5);
 const num = (v) => Number(v || 0);
 

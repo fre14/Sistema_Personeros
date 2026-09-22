@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import {
   createDbMock, crearReq, crearRes,
   usuarioAdmin, usuarioCoordinador, usuarioPersonero, silenciarConsola,
-} from '../support/knex-mock.js';
+} from '../../setup/knex-mock.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // resultados.controller.js — el nucleo del sistema: carga, correccion,
@@ -20,23 +20,23 @@ const uploadActaImage = jest.fn();
 const getActaUrl = jest.fn();
 const invalidateDashboard = jest.fn().mockResolvedValue(undefined);
 
-jest.unstable_mockModule('../../src/config/database.js', () => ({ default: mockDb.db }));
-jest.unstable_mockModule('../../src/services/auditoria.service.js', () => ({ registrarAuditoria }));
-jest.unstable_mockModule('../../src/services/websocket.service.js', () => ({
+jest.unstable_mockModule('../../../src/config/database.js', () => ({ default: mockDb.db }));
+jest.unstable_mockModule('../../../src/services/auditoria.service.js', () => ({ registrarAuditoria }));
+jest.unstable_mockModule('../../../src/services/websocket.service.js', () => ({
   notifyCoordinator, notifyAdmin, notifyPersonero,
   getIo: jest.fn(), setupWebSocket: jest.fn(),
 }));
-jest.unstable_mockModule('../../src/services/storage.service.js', () => ({
+jest.unstable_mockModule('../../../src/services/storage.service.js', () => ({
   uploadActaImage, getActaUrl, deleteActaImage: jest.fn(),
 }));
-jest.unstable_mockModule('../../src/services/cache.service.js', () => ({
+jest.unstable_mockModule('../../../src/services/cache.service.js', () => ({
   invalidateDashboard, cacheGet: jest.fn(), cacheSet: jest.fn(), cacheWrap: jest.fn(),
 }));
 
 const {
   subirResultado, corregirResultado, verificarResultado, observarResultado,
   getResultadosPorLocal, getResultadoDetalle, getMiMesa, confirmarMesa,
-} = await import('../../src/controllers/resultados.controller.js');
+} = await import('../../../src/controllers/resultados.controller.js');
 
 // ── Datos de referencia ────────────────────────────────────────────
 const MESA_PENDIENTE = {

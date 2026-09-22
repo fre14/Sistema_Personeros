@@ -4,22 +4,6 @@ import { notifyCoordinator, notifyAdmin, notifyPersonero } from '../services/web
 import { uploadActaImage, getActaUrl } from '../services/storage.service.js';
 import { invalidateDashboard } from '../services/cache.service.js';
 
-/**
- * Carga y verificacion de actas.
- *
- * Errores corregidos respecto a la version anterior:
- *  1. Los votos por candidato se guardaban como Number(votos) sobre el array
- *     completo, es decir NaN: TODOS los detalles quedaban en cero o fallaban.
- *  2. Dentro de db.transaction se hacia res.status(...).json(...) sin cortar
- *     el flujo: la transaccion seguia corriendo y se intentaba responder dos
- *     veces ("Cannot set headers after they are sent"). Ahora se lanza un
- *     ErrorNegocio que revierte la transaccion y responde una sola vez.
- *  3. Se ordenaba por "created_at" en resultados_mesa; la columna es "subido_en".
- *  4. Se usaba mesa.numero (inexistente) para la ruta de la foto.
- *  5. El acta se subia al storage antes de validar los votos: si la validacion
- *     fallaba, la imagen quedaba huerfana. Ahora se valida primero.
- */
-
 class ErrorNegocio extends Error {
   constructor(status, message) {
     super(message);
@@ -80,7 +64,6 @@ export const subirResultado = async (req, res) => {
     const sumaCandidatos = listaVotos.reduce((acc, v) => acc + v.votos, 0);
     const totalEmitidos = sumaCandidatos + blanco + nulo + impugnados;
 
-    // ── Validaciones previas a tocar la base o el storage ──
     const asignacion = await db('asignacion_personeros')
       .where({ usuario_id: req.user.id, mesa_id: mesaId, activo: true })
       .first();
@@ -121,7 +104,6 @@ export const subirResultado = async (req, res) => {
       throw new ErrorNegocio(400, 'El acta de esta mesa ya fue transmitida y no puede modificarse mientras esté en revisión o haya sido aprobada. Solo se permite corregir si fue observada/declinada por el coordinador.');
     }
 
-    // ── Subida de la foto (ya validado todo lo demas) ──
     let fotoUrl = anterior?.foto_acta_url || null;
     if (req.file) {
       fotoUrl = await uploadActaImage(req.file.buffer, req.file.mimetype, mesa.numero_mesa || mesaId);
@@ -159,7 +141,6 @@ export const subirResultado = async (req, res) => {
         resultadoId = fila?.id ?? fila;
       }
 
-      // Aqui estaba el error: se guardaba Number(votos) en vez de v.votos
       await trx('detalle_resultados').insert(
         listaVotos.map((v) => ({
           resultado_id: resultadoId,
@@ -412,7 +393,6 @@ export const getResultadoDetalle = async (req, res) => {
 
     if (!resultado) throw new ErrorNegocio(404, 'Resultado no encontrado');
 
-    // Un personero solo puede ver su propia acta; un coordinador, las de sus locales.
     if (req.user.rol === 'personero') {
       const propio = await db('asignacion_personeros')
         .where({ usuario_id: req.user.id, mesa_id: resultado.mesa_id, activo: true })

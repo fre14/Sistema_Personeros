@@ -3,24 +3,10 @@ import fs from 'fs/promises';
 import path from 'path';
 import { supabase, bucketName, storageConfig } from '../config/storage.js';
 
-/**
- * Guarda y recupera las fotos de las actas.
- *
- * La version anterior lanzaba un error si Supabase no estaba configurado,
- * lo que dejaba a los personeros sin poder enviar el acta. Ahora el modo
- * local funciona sin ninguna configuracion previa.
- */
-
 const asegurarCarpeta = async (dir) => {
   await fs.mkdir(dir, { recursive: true });
 };
 
-/**
- * @param {Buffer} buffer contenido de la imagen
- * @param {string} mimeType image/jpeg o image/png
- * @param {string|number} mesaNumero para organizar los archivos
- * @returns {Promise<string>} ruta interna del archivo guardado
- */
 export async function uploadActaImage(buffer, mimeType, mesaNumero) {
   const ext = mimeType === 'image/png' ? 'png' : 'jpg';
   const nombre = `${Date.now()}-${uuidv4()}.${ext}`;
@@ -35,17 +21,12 @@ export async function uploadActaImage(buffer, mimeType, mesaNumero) {
     return rutaRelativa;
   }
 
-  // ── Modo local ──
   const destino = path.join(storageConfig.localPath, rutaRelativa);
   await asegurarCarpeta(path.dirname(destino));
   await fs.writeFile(destino, buffer);
   return rutaRelativa;
 }
 
-/**
- * Devuelve una URL que el navegador puede abrir.
- * En local es una ruta servida por Nginx; en Supabase, una URL firmada.
- */
 export async function getActaUrl(rutaRelativa) {
   if (!rutaRelativa) return null;
 
@@ -80,7 +61,5 @@ export async function deleteActaImage(rutaRelativa) {
 
   try {
     await fs.unlink(path.join(storageConfig.localPath, rutaRelativa));
-  } catch {
-    /* si el archivo ya no existe, no es un error */
-  }
+  } catch {}
 }

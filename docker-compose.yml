@@ -1,13 +1,14 @@
 # ===========================================================================
-# Sistema Electoral - Despliegue de produccion en un VPS Contabo
+# Sistema Electoral - Entorno de DESARROLLO LOCAL y pruebas integradas
 #
-# Arquitectura: Nginx (balanceador) -> 4 backends Node -> PgBouncer ->
-#               PostgreSQL 16, con Redis para cache y sincronizacion de
-#               WebSocket entre los backends.
+# Para producción en AWS (ECS Fargate + ALB + RDS + ElastiCache + S3):
+# Consulte: docs/GUIA_DESPLIEGUE_AWS.md
 #
-# Uso:
-#   cp backend/.env.example backend/.env   (y editar)
-#   cp .env.example .env                   (y editar)
+# Arquitectura local: Nginx (balanceador) -> 4 backends Node -> PgBouncer ->
+#                     PostgreSQL 16, con Redis para cache y WebSockets.
+#
+# Uso local:
+#   cp backend/.env.example backend/.env
 #   docker compose up -d
 # ===========================================================================
 

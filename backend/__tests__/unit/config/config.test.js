@@ -39,7 +39,7 @@ describe('config/storage.js — seleccion de driver', () => {
       jest.resetModules();
       jest.unstable_mockModule('@supabase/supabase-js', () => ({ createClient }));
       jest.unstable_mockModule('dotenv', () => ({ default: { config: jest.fn() } }));
-      modulo = await import('../../src/config/storage.js');
+      modulo = await import('../../../src/config/storage.js');
     });
     return modulo;
   };
@@ -157,7 +157,7 @@ describe('config/database.js — conexion y pool', () => {
       knexFake.mockClear();
       jest.unstable_mockModule('knex', () => ({ default: knexFake }));
       jest.unstable_mockModule('dotenv', () => ({ default: { config: jest.fn() } }));
-      await import('../../src/config/database.js');
+      await import('../../../src/config/database.js');
       config = knexFake.mock.calls[0][0];
     });
     return config;
@@ -372,7 +372,7 @@ describe('config/redis.js — ciclo de vida y modo degradado', () => {
     await conEntorno(vars, async () => {
       jest.resetModules();
       jest.unstable_mockModule('redis', () => ({ createClient: jest.fn(() => cliente) }));
-      modulo = await import('../../src/config/redis.js');
+      modulo = await import('../../../src/config/redis.js');
     });
     return modulo;
   };
@@ -530,7 +530,7 @@ describe('config/redis.js — ciclo de vida y modo degradado', () => {
         jest.resetModules();
         const createClient = jest.fn(() => crearClienteFake());
         jest.unstable_mockModule('redis', () => ({ createClient }));
-        const { initRedis } = await import('../../src/config/redis.js');
+        const { initRedis } = await import('../../../src/config/redis.js');
         silenciar();
         await initRedis();
         url = createClient.mock.calls[0][0].url;
@@ -579,7 +579,7 @@ describe('config/redis.js — ciclo de vida y modo degradado', () => {
       jest.resetModules();
       const createClient = jest.fn((o) => { opciones = o; return crearClienteFake(); });
       jest.unstable_mockModule('redis', () => ({ createClient }));
-      const { initRedis } = await import('../../src/config/redis.js');
+      const { initRedis } = await import('../../../src/config/redis.js');
       await initRedis();
     });
 

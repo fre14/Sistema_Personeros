@@ -1,14 +1,5 @@
 import db from '../config/database.js';
 
-/**
- * Controlador para la gestión y supervisión de Coordinadores de Local.
- * 
- * Regla de negocio fundamental:
- * Al coordinar un local de votación, todos los personeros asignados a las mesas
- * de dicho local pertenecen y son supervisados automáticamente por el coordinador.
- */
-
-// Listar todos los locales asignados al coordinador autenticado
 export const getMisLocales = async (req, res) => {
   try {
     const usuarioId = req.user.id;
@@ -27,10 +18,8 @@ export const getMisLocales = async (req, res) => {
       .select('l.id', 'l.nombre', 'l.direccion', 'd.nombre as distrito', 'd.id as distrito_id')
       .orderBy('l.nombre', 'asc');
 
-    // Obtener estadísticas de cada local
     const localesConStats = await Promise.all(
       locales.map(async (local) => {
-        // Conteo de mesas por estado
         const mesasEstados = await db('mesas_sufragio')
           .where({ local_id: local.id })
           .select('estado')
@@ -55,7 +44,6 @@ export const getMisLocales = async (req, res) => {
           else if (fila.estado === 'observada') stats.observadas += count;
         });
 
-        // Conteo de personeros activos asignados a mesas de este local
         const personerosCount = await db('asignacion_personeros as ap')
           .join('mesas_sufragio as m', 'ap.mesa_id', 'm.id')
           .where({ 'm.local_id': local.id, 'ap.activo': true })
@@ -86,14 +74,12 @@ export const getMisLocales = async (req, res) => {
   }
 };
 
-// Obtener todas las mesas de un local asignado con la información de sus personeros supervisados
 export const getMesasDeLocal = async (req, res) => {
   try {
     const { localId } = req.params;
     const usuarioId = req.user.id;
     const esAdmin = req.user.rol === 'admin';
 
-    // Verificar permiso sobre el local
     if (!esAdmin) {
       const permiso = await db('asignacion_coordinadores')
         .where({ usuario_id: usuarioId, local_id: localId, activo: true })
@@ -113,7 +99,6 @@ export const getMesasDeLocal = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Local no encontrado' });
     }
 
-    // Obtener mesas con el personero asignado y el resultado más reciente
     const mesas = await db('mesas_sufragio as m')
       .leftJoin('asignacion_personeros as ap', function () {
         this.on('ap.mesa_id', '=', 'm.id').andOn('ap.activo', '=', db.raw('true'));
@@ -152,7 +137,6 @@ export const getMesasDeLocal = async (req, res) => {
   }
 };
 
-// Obtener todos los personeros supervisados automáticamente por el coordinador
 export const getPersonerosSupervisados = async (req, res) => {
   try {
     const usuarioId = req.user.id;

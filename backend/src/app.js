@@ -31,8 +31,6 @@ const app = express();
 const httpServer = createServer(app);
 const INSTANCE_ID = process.env.INSTANCE_ID || 'backend-local';
 
-// Detras de Nginx: sin esto todos los usuarios comparten la IP del proxy y
-// el rate limit bloquearia a todo el mundo a la vez.
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 
 app.use(helmet({
@@ -60,15 +58,12 @@ app.use(cors({
 app.use(express.json({ limit: '12mb' }));
 app.use(express.urlencoded({ extended: true, limit: '12mb' }));
 
-// En produccion solo se registran errores: 800 usuarios generan mucho log y
-// escribir cada peticion a disco compite con la base de datos por I/O.
 if (process.env.NODE_ENV === 'production') {
   app.use(morgan('combined', { skip: (req, res) => res.statusCode < 400 }));
 } else {
   app.use(morgan('dev'));
 }
 
-// ── Rate limiting ──
 const limiterOpts = { standardHeaders: true, legacyHeaders: false };
 
 const authLimiter = rateLimit({
@@ -97,7 +92,6 @@ app.use('/api/', apiLimiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/resultados', escrituraLimiter);
 
-// ── Archivos Estáticos (Fotos de Actas) ──
 const uploadsPathCandidates = [
   process.env.STORAGE_LOCAL_PATH,
   process.platform === 'win32' ? 'C:/app/uploads' : '/app/uploads',
@@ -114,18 +108,13 @@ uploadsPathCandidates.forEach((dir) => {
       app.use('/actas/actas', express.static(dir));
       app.use('/uploads', express.static(dir));
     }
-  } catch (e) {
-    // Ignorar si el path no existe
-  }
+  } catch (e) {}
 });
 
-// ── Health checks ──
-// /api/health: ligero, lo consulta Nginx en cada request fallida.
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', instancia: INSTANCE_ID, ts: Date.now() });
 });
 
-// /api/health/full: comprueba de verdad base de datos y Redis.
 app.get('/api/health/full', async (req, res) => {
   const salud = { instancia: INSTANCE_ID, ts: Date.now(), db: false, redis: isRedisReady() };
   try {
@@ -150,7 +139,6 @@ app.get('/api/health/full', async (req, res) => {
   res.status(salud.db ? 200 : 503).json(salud);
 });
 
-// ── Rutas ──
 app.use('/api/auth', authRoutes);
 app.use('/api/distritos', distritosRoutes);
 app.use('/api/locales', localesRoutes);
@@ -174,7 +162,6 @@ const arrancar = async () => {
   await initRedis();
   await setupWebSocket(httpServer, allowedOrigins);
 
-  // Con 800 sockets abiertos el timeout por defecto corta conexiones vivas.
   httpServer.keepAliveTimeout = 65000;
   httpServer.headersTimeout = 70000;
 
@@ -189,9 +176,6 @@ const arrancar = async () => {
   });
 };
 
-// ── Apagado ordenado ──
-// Sin esto, al reiniciar se cortan las peticiones en vuelo: un personero
-// podria perder el acta que estaba subiendo.
 let apagando = false;
 const apagar = async (senal) => {
   if (apagando) return;

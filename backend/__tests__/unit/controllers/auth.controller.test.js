@@ -1,14 +1,5 @@
 import { jest } from '@jest/globals';
 
-// ─────────────────────────────────────────────────────────
-// Test: auth.controller.js & dashboard.controller.js
-// Uses jest.unstable_mockModule for ESM mocking
-// ─────────────────────────────────────────────────────────
-
-// ═══════════════════════════════════════════════════════
-// MOCK SETUP (must be before dynamic imports)
-// ═══════════════════════════════════════════════════════
-
 const mockInsert = jest.fn();
 const mockDbChain = {
   where: jest.fn().mockReturnThis(),
@@ -39,15 +30,15 @@ const mockDb = jest.fn(() => mockDbChain);
 mockDb.fn = { now: jest.fn() };
 mockDb.raw = jest.fn((sql) => sql);
 
-jest.unstable_mockModule('../../src/config/database.js', () => ({
+jest.unstable_mockModule('../../../src/config/database.js', () => ({
   default: mockDb,
 }));
 
-jest.unstable_mockModule('../../src/services/auditoria.service.js', () => ({
+jest.unstable_mockModule('../../../src/services/auditoria.service.js', () => ({
   registrarAuditoria: jest.fn(),
 }));
 
-jest.unstable_mockModule('../../src/services/websocket.service.js', () => ({
+jest.unstable_mockModule('../../../src/services/websocket.service.js', () => ({
   notifyCoordinator: jest.fn(),
   notifyAdmin: jest.fn(),
   notifyPersonero: jest.fn(),
@@ -55,13 +46,13 @@ jest.unstable_mockModule('../../src/services/websocket.service.js', () => ({
   setupWebSocket: jest.fn(),
 }));
 
-jest.unstable_mockModule('../../src/services/storage.service.js', () => ({
+jest.unstable_mockModule('../../../src/services/storage.service.js', () => ({
   uploadActaImage: jest.fn(),
   getActaUrl: jest.fn(),
   deleteActaImage: jest.fn(),
 }));
 
-jest.unstable_mockModule('../../src/services/cache.service.js', () => ({
+jest.unstable_mockModule('../../../src/services/cache.service.js', () => ({
   cacheWrap: jest.fn((key, ttl, fn) => fn()),
   cacheGet: jest.fn().mockResolvedValue(null),
   cacheSet: jest.fn().mockResolvedValue(),
@@ -96,7 +87,7 @@ describe('Auth Controller', () => {
 
   beforeAll(async () => {
     // Dynamic import after mocks are set
-    authController = await import('../../src/controllers/auth.controller.js');
+    authController = await import('../../../src/controllers/auth.controller.js');
     const bcryptModule = await import('bcryptjs');
     bcrypt = bcryptModule.default || bcryptModule;
   });
@@ -387,7 +378,7 @@ describe('Dashboard Controller', () => {
   let dashboardController;
 
   beforeAll(async () => {
-    dashboardController = await import('../../src/controllers/dashboard.controller.js');
+    dashboardController = await import('../../../src/controllers/dashboard.controller.js');
   });
 
   beforeEach(() => {

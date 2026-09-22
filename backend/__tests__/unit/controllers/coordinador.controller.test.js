@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import {
   createDbMock, crearReq, crearRes,
   usuarioAdmin, usuarioCoordinador, silenciarConsola,
-} from '../support/knex-mock.js';
+} from '../../setup/knex-mock.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // coordinador.controller.js — 88% de lineas pero solo 62.5% de funciones
@@ -15,10 +15,10 @@ import {
 
 const mockDb = createDbMock();
 
-jest.unstable_mockModule('../../src/config/database.js', () => ({ default: mockDb.db }));
+jest.unstable_mockModule('../../../src/config/database.js', () => ({ default: mockDb.db }));
 
 const { getMisLocales, getMesasDeLocal, getPersonerosSupervisados } =
-  await import('../../src/controllers/coordinador.controller.js');
+  await import('../../../src/controllers/coordinador.controller.js');
 
 let consola;
 beforeEach(() => {

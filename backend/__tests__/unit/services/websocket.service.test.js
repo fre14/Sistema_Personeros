@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { createDbMock, silenciarConsola } from '../support/knex-mock.js';
+import { createDbMock, silenciarConsola } from '../../setup/knex-mock.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // setupWebSocket — 100+ lineas sin cubrir.
@@ -45,20 +45,20 @@ const jwtVerify = jest.fn();
 
 jest.unstable_mockModule('socket.io', () => ({ Server: ServerFake }));
 jest.unstable_mockModule('@socket.io/redis-adapter', () => ({ createAdapter }));
-jest.unstable_mockModule('../../src/config/redis.js', () => ({
+jest.unstable_mockModule('../../../src/config/redis.js', () => ({
   getRedis, initRedis: jest.fn(), isRedisReady: jest.fn(), closeRedis: jest.fn(),
 }));
-jest.unstable_mockModule('../../src/config/database.js', () => ({ default: mockDb.db }));
+jest.unstable_mockModule('../../../src/config/database.js', () => ({ default: mockDb.db }));
 jest.unstable_mockModule('jsonwebtoken', () => ({
   default: { verify: jwtVerify, sign: jest.fn() },
   verify: jwtVerify, sign: jest.fn(),
 }));
-jest.unstable_mockModule('../../src/config/auth.js', () => ({
+jest.unstable_mockModule('../../../src/config/auth.js', () => ({
   authConfig: { secret: 'secreto-de-prueba' },
 }));
 
 const { setupWebSocket, notifyCoordinator, notifyAdmin, notifyPersonero, getWsStats } =
-  await import('../../src/services/websocket.service.js');
+  await import('../../../src/services/websocket.service.js');
 
 /** Crea un socket simulado con handlers registrables. */
 const crearSocket = (user, auth = {}) => {

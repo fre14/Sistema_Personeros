@@ -257,6 +257,34 @@ Añadido:
 
 ---
 
+## 5. Migración a AWS, Limpieza de Código y Reestructuración de Pruebas (22 de septiembre de 2026)
+
+### 5.1. Depuración y Limpieza del Código Fuente
+- Se eliminaron todos los comentarios extensos, bloques JSDoc y anotaciones redundantes de todos los módulos en `backend/src/` (controladores, servicios, middlewares, configuraciones, rutas y `app.js`).
+- El código fuente quedó 100% limpio y profesional, manteniendo la totalidad de su lógica de negocio y robustez técnica.
+
+### 5.2. Reestructuración de la Suite de Pruebas (`backend/__tests__/`)
+- Se migró la estructura de pruebas desde la carpeta desordenada `tests/` a la convención estándar `__tests__/`.
+- Las pruebas fueron organizadas y rotuladas por módulo:
+  - `__tests__/setup/`: Dobles de prueba (`helpers.js`, `knex-mock.js`).
+  - `__tests__/unit/controllers/`: Controladores individuales (`auth`, `coordinador`, `asignaciones`, `crud`, `dashboard`, `resultados`).
+  - `__tests__/unit/middlewares/`: Middlewares de seguridad, auditoría y validación.
+  - `__tests__/unit/services/`: Servicios de caché, storage, auditoría y WebSockets.
+  - `__tests__/unit/config/`: Pruebas de configuración y arranque.
+  - `__tests__/unit/validations/`: Validaciones de esquemas Zod.
+  - `__tests__/integration/`: Pruebas de integración HTTP sobre la app Express real.
+  - `__tests__/load/`: Escenarios k6 de carga y estrés para 850 usuarios simultáneos.
+- Se configuró `.vscode/settings.json` tanto en la raíz como en el backend para habilitar la ejecución interactiva y la visualización de cobertura directamente desde Visual Studio Code.
+- Mantenimiento del 100% de éxito: **633 pruebas aprobadas** con 99.92% de cobertura de declaraciones y 100% de funciones y líneas.
+
+### 5.3. Actualización de Tecnologías de Despliegue (AWS)
+- Se incorporó la **Guía Oficial de Despliegue en AWS** (`docs/GUIA_DESPLIEGUE_AWS.md`) con el presupuesto bajo demanda de **$117.64 USD** para 77 horas de servicio distribuidas en 4 fases (Prueba de carga el 26 de setiembre, Jornada electoral el 4 de octubre y Descarga de datos el 5 y 6 de octubre).
+- Se archivó la guía de despliegue en servidor VPS único en `docs/legacy/GUIA_DESPLIEGUE_CONTABO.md`.
+- Se reconfiguró `docker-compose.yml` especificando su rol exclusivo para desarrollo local y pruebas integradas.
+- Se limpiaron los archivos temporales y generadores de proformas del repositorio, actualizando `.gitignore`.
+
+---
+
 ## Qué falta por decidir
 
 Cosas que no se incluyeron porque dependen de su criterio:

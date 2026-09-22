@@ -2,10 +2,6 @@ import db from '../config/database.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
-/**
- * Controller para Auth
- */
-
 export const login = async (req, res) => {
   try {
     const { dni, password } = req.body;
@@ -17,12 +13,10 @@ export const login = async (req, res) => {
 
     let isValid = false;
 
-    // 1. Verificación estándar de password con bcrypt
     if (user.password_hash) {
       isValid = await bcrypt.compare(password, user.password_hash);
     }
 
-    // 2. Si es personero, permitir autenticación con su número de mesa oficial asignado
     if (!isValid && user.rol === 'personero') {
       const asignacion = await db('asignacion_personeros')
         .join('mesas_sufragio', 'asignacion_personeros.mesa_id', 'mesas_sufragio.id')
@@ -104,7 +98,6 @@ export const changePassword = async (req, res) => {
     const user = await db('usuarios').where({ id: req.user.id }).first();
     if (!user) return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
 
-    // Si el usuario ya tiene contraseña, verificar la actual
     if (user.password_hash && currentPassword) {
       const isValid = await bcrypt.compare(currentPassword, user.password_hash);
       if (!isValid) {

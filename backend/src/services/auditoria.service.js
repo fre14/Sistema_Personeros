@@ -5,10 +5,8 @@ export const registrarAuditoria = async (...args) => {
     let tabla, registroId, accion, datosAnteriores, datosNuevos, usuarioId, ip, userAgent, lat, lng;
 
     if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0])) {
-      // Objeto con parámetros nombrados
       ({ tabla, registroId, accion, datosAnteriores, datosNuevos, usuarioId, ip, userAgent, lat, lng } = args[0]);
     } else {
-      // Parámetros posicionales: (tabla, accion, usuarioId, datosNuevos, payload, datosAnteriores, trx)
       tabla = args[0];
       accion = args[1];
       usuarioId = args[2];
@@ -19,7 +17,6 @@ export const registrarAuditoria = async (...args) => {
 
     if (!tabla) return;
 
-    // Normalizar acción a los valores del enum PostgreSQL: 'INSERT', 'UPDATE', 'DELETE'
     let accionEnum = 'UPDATE';
     const accStr = String(accion || '').toUpperCase();
     if (accStr.includes('INSERT') || accStr.includes('CREATE') || accStr.includes('POST')) {

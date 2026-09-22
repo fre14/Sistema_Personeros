@@ -1,17 +1,5 @@
 import { createClient } from 'redis';
 
-/**
- * Cliente Redis central del sistema.
- *
- * Se usa para dos cosas distintas:
- *   1. Adapter de Socket.io (pub/sub entre instancias del backend).
- *   2. Cache de consultas pesadas del dashboard.
- *
- * Si Redis no está disponible el sistema NO se cae: sigue funcionando
- * en modo degradado (sin cache y con WebSocket local a cada instancia).
- * Esto evita que un fallo de cache tumbe la jornada electoral.
- */
-
 const REDIS_ENABLED = String(process.env.REDIS_ENABLED ?? 'true').toLowerCase() !== 'false';
 
 let client = null;
@@ -37,7 +25,6 @@ export const initRedis = async () => {
     url: buildUrl(),
     socket: {
       connectTimeout: 5000,
-      // Reintento con backoff: 100ms, 200ms... tope 3s. Nunca se rinde.
       reconnectStrategy: (retries) => Math.min(retries * 100, 3000),
     },
   });
@@ -78,9 +65,7 @@ export const closeRedis = async () => {
   if (client) {
     try {
       await client.quit();
-    } catch {
-      /* el cliente ya estaba cerrado */
-    }
+    } catch {}
     client = null;
     ready = false;
   }

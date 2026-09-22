@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 import {
   createDbMock, crearReq, crearRes, usuarioAdmin, silenciarConsola,
-} from '../support/knex-mock.js';
+} from '../../setup/knex-mock.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // asignaciones.controller.js — 285 lineas, 0% de cobertura previa.
@@ -12,15 +12,15 @@ import {
 const mockDb = createDbMock();
 const registrarAuditoria = jest.fn().mockResolvedValue(undefined);
 
-jest.unstable_mockModule('../../src/config/database.js', () => ({ default: mockDb.db }));
-jest.unstable_mockModule('../../src/services/auditoria.service.js', () => ({ registrarAuditoria }));
+jest.unstable_mockModule('../../../src/config/database.js', () => ({ default: mockDb.db }));
+jest.unstable_mockModule('../../../src/services/auditoria.service.js', () => ({ registrarAuditoria }));
 
 const {
   asignarPersonero, reasignarPersonero,
   asignarCoordinador, reasignarCoordinador,
   getAsignacionesPersoneros, getAsignacionesCoordinadores,
   getHistorial, removeAsignacionPersonero, removeAsignacionCoordinador,
-} = await import('../../src/controllers/asignaciones.controller.js');
+} = await import('../../../src/controllers/asignaciones.controller.js');
 
 let consola;
 beforeEach(() => {

@@ -1,0 +1,11 @@
+{
+  "jest.jestCommandLine": "node --experimental-vm-modules ./backend/node_modules/jest/bin/jest.js",
+  "jest.rootPath": "backend",
+  "jest.runMode": "on-demand",
+  "jest.showCoverageOnLoad": true,
+  "coverage-gutters.coverageBaseDir": "backend/coverage",
+  "coverage-gutters.coverageFileNames": [
+    "lcov.info"
+  ],
+  "testing.automaticallyOpenTestResults": "always"
+}

@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { createDbMock, silenciarConsola } from '../support/knex-mock.js';
+import { createDbMock, silenciarConsola } from '../../setup/knex-mock.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // Servicios que estaban sin cubrir o cubiertos a medias:
@@ -51,11 +51,11 @@ const fsMkdir = jest.fn().mockResolvedValue(undefined);
 const fsWriteFile = jest.fn().mockResolvedValue(undefined);
 const fsUnlink = jest.fn().mockResolvedValue(undefined);
 
-jest.unstable_mockModule('../../src/config/database.js', () => ({ default: mockDb.db }));
-jest.unstable_mockModule('../../src/config/redis.js', () => ({
+jest.unstable_mockModule('../../../src/config/database.js', () => ({ default: mockDb.db }));
+jest.unstable_mockModule('../../../src/config/redis.js', () => ({
   getRedis, initRedis: jest.fn(), isRedisReady: jest.fn(), closeRedis: jest.fn(),
 }));
-jest.unstable_mockModule('../../src/config/storage.js', () => ({
+jest.unstable_mockModule('../../../src/config/storage.js', () => ({
   supabase: supabaseFake,
   bucketName: 'actas-electorales',
   storageConfig,
@@ -71,15 +71,15 @@ jest.unstable_mockModule('jsonwebtoken', () => ({
   default: { verify: jest.fn(), sign: jest.fn() },
   verify: jest.fn(), sign: jest.fn(),
 }));
-jest.unstable_mockModule('../../src/config/auth.js', () => ({ authConfig: { secret: 's' } }));
+jest.unstable_mockModule('../../../src/config/auth.js', () => ({ authConfig: { secret: 's' } }));
 
 const { cacheGet, cacheSet, cacheWrap, invalidateDashboard } =
-  await import('../../src/services/cache.service.js');
+  await import('../../../src/services/cache.service.js');
 const { uploadActaImage, getActaUrl, deleteActaImage } =
-  await import('../../src/services/storage.service.js');
-const { registrarAuditoria } = await import('../../src/services/auditoria.service.js');
+  await import('../../../src/services/storage.service.js');
+const { registrarAuditoria } = await import('../../../src/services/auditoria.service.js');
 const { notifyCoordinator, notifyAdmin, notifyPersonero, getIo, getWsStats } =
-  await import('../../src/services/websocket.service.js');
+  await import('../../../src/services/websocket.service.js');
 
 beforeEach(() => {
   jest.clearAllMocks();

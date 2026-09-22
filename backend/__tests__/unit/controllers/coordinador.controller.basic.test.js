@@ -1,9 +1,5 @@
 import { jest } from '@jest/globals';
 
-// ─────────────────────────────────────────────────────────
-// Unit Test: coordinador.controller.js
-// ─────────────────────────────────────────────────────────
-
 const mockDbChain = {
   where: jest.fn().mockReturnThis(),
   whereIn: jest.fn().mockReturnThis(),
@@ -20,7 +16,7 @@ const mockDbChain = {
 const mockDb = jest.fn(() => mockDbChain);
 mockDb.raw = jest.fn((sql) => sql);
 
-jest.unstable_mockModule('../../src/config/database.js', () => ({
+jest.unstable_mockModule('../../../src/config/database.js', () => ({
   default: mockDb,
 }));
 
@@ -44,7 +40,7 @@ describe('Coordinador Controller - Pruebas Unitarias', () => {
   let coordinadorController;
 
   beforeAll(async () => {
-    coordinadorController = await import('../../src/controllers/coordinador.controller.js');
+    coordinadorController = await import('../../../src/controllers/coordinador.controller.js');
   });
 
   beforeEach(() => {

@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { jest } from '@jest/globals';
-import { authConfig } from '../src/config/auth.js';
+import { authConfig } from '../../src/config/auth.js';
 
 export const generateToken = (payload) => {
     return jwt.sign(payload, authConfig.secret || process.env.JWT_SECRET || 'secret', { expiresIn: '1h' });

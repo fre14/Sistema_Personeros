@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import { z } from 'zod';
-import { createDbMock, crearReq, crearRes, silenciarConsola } from '../support/knex-mock.js';
+import { createDbMock, crearReq, crearRes, silenciarConsola } from '../../setup/knex-mock.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // Middlewares.
@@ -16,14 +16,14 @@ const mockDb = createDbMock();
 const registrarAuditoria = jest.fn().mockResolvedValue(undefined);
 const jwtVerify = jest.fn();
 
-jest.unstable_mockModule('../../src/config/database.js', () => ({ default: mockDb.db }));
-jest.unstable_mockModule('../../src/services/auditoria.service.js', () => ({ registrarAuditoria }));
+jest.unstable_mockModule('../../../src/config/database.js', () => ({ default: mockDb.db }));
+jest.unstable_mockModule('../../../src/services/auditoria.service.js', () => ({ registrarAuditoria }));
 jest.unstable_mockModule('jsonwebtoken', () => ({
   default: { verify: jwtVerify, sign: jest.fn() },
   verify: jwtVerify,
   sign: jest.fn(),
 }));
-jest.unstable_mockModule('../../src/config/auth.js', () => ({
+jest.unstable_mockModule('../../../src/config/auth.js', () => ({
   authConfig: { secret: 'secreto-de-prueba', expiresIn: '15m' },
 }));
 
@@ -39,13 +39,13 @@ const multerFake = jest.fn((opciones) => {
 multerFake.memoryStorage = jest.fn(() => ({ __tipo: 'memoria' }));
 jest.unstable_mockModule('multer', () => ({ default: multerFake }));
 
-const { validate } = await import('../../src/middlewares/validate.middleware.js');
-const { errorHandler } = await import('../../src/middlewares/errorHandler.js');
-const { uploadActa } = await import('../../src/middlewares/upload.middleware.js');
-const { auditLog } = await import('../../src/middlewares/audit.middleware.js');
+const { validate } = await import('../../../src/middlewares/validate.middleware.js');
+const { errorHandler } = await import('../../../src/middlewares/errorHandler.js');
+const { uploadActa } = await import('../../../src/middlewares/upload.middleware.js');
+const { auditLog } = await import('../../../src/middlewares/audit.middleware.js');
 const {
   authenticateToken, requireRole, requireOwnMesa, requireOwnLocal,
-} = await import('../../src/middlewares/auth.middleware.js');
+} = await import('../../../src/middlewares/auth.middleware.js');
 
 beforeEach(() => {
   jest.clearAllMocks();

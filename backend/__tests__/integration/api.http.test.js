@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { createDbMock } from '../support/knex-mock.js';
+import { createDbMock } from '../setup/knex-mock.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // Integracion HTTP sobre la app Express REAL.

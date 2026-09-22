@@ -23,11 +23,21 @@ nginx/ssl/
 *.log
 npm-debug.log*
 
+# Documentos y proformas temporales
+*.docx
+*.xlsx
+generate_proforma*.py
+__pycache__/
+*.pyc
+.terraform/
+*.tfstate*
+
 # Sistema
 .DS_Store
 Thumbs.db
-.vscode/
 .idea/
+.vscode/*
+!.vscode/settings.json
 
 # Resultados de pruebas de carga
 resumen-carga.json

@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { createDbMock, crearReq, crearRes, usuarioAdmin } from '../support/knex-mock.js';
+import { createDbMock, crearReq, crearRes, usuarioAdmin } from '../../setup/knex-mock.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // dashboard.controller.js — 62% previo, 45% de ramas.
@@ -13,8 +13,8 @@ import { createDbMock, crearReq, crearRes, usuarioAdmin } from '../support/knex-
 const mockDb = createDbMock();
 const cacheWrap = jest.fn((clave, ttl, fn) => fn());
 
-jest.unstable_mockModule('../../src/config/database.js', () => ({ default: mockDb.db }));
-jest.unstable_mockModule('../../src/services/cache.service.js', () => ({
+jest.unstable_mockModule('../../../src/config/database.js', () => ({ default: mockDb.db }));
+jest.unstable_mockModule('../../../src/services/cache.service.js', () => ({
   cacheWrap, cacheGet: jest.fn(), cacheSet: jest.fn(), invalidateDashboard: jest.fn(),
 }));
 
@@ -22,7 +22,7 @@ const {
   getResumen, getComposicionVoto, getResultadosPorCandidato,
   getResultadosPorDistrito, getResultadosPorLocal,
   getMesasPendientes, getAuditoria,
-} = await import('../../src/controllers/dashboard.controller.js');
+} = await import('../../../src/controllers/dashboard.controller.js');
 
 beforeEach(() => {
   jest.clearAllMocks();
