@@ -12,7 +12,7 @@ import {
   BarChart3, Eye, FileText, CheckCircle2, AlertTriangle, 
   Image as ImageIcon, Filter, X, RefreshCw, PieChart as PieIcon, 
   Layers, ExternalLink, Activity, Download, MapPin, Building2,
-  ChevronRight, TrendingUp, Vote, Award, ShieldCheck, Check
+  ChevronRight, TrendingUp, Vote, Award, ShieldCheck, Check, ArrowLeft
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -250,6 +250,18 @@ const ResultadosAdminPage = () => {
     }
     return tipoEleccion === 'distrital' ? 'Ámbito Distrital (Distritos con Candidatura)' : 'Total Provincial (Huamanga)';
   }, [tipoEleccion, filtroDistrito, filtroLocal, distritos, locales]);
+
+  const nombreDistritoActual = useMemo(() => {
+    if (!filtroDistrito) return '';
+    const d = distritos.find(dist => String(dist.id) === String(filtroDistrito));
+    return d ? d.nombre : `Distrito #${filtroDistrito}`;
+  }, [filtroDistrito, distritos]);
+
+  const nombreLocalActual = useMemo(() => {
+    if (!filtroLocal) return '';
+    const l = locales.find(loc => String(loc.id) === String(filtroLocal));
+    return l ? l.nombre : `Local #${filtroLocal}`;
+  }, [filtroLocal, locales]);
 
   const handleCambioDistritoGrafico = (e) => {
     setFiltroDistrito(e.target.value);
@@ -521,6 +533,24 @@ const ResultadosAdminPage = () => {
                 <span>Desglosar por:</span>
               </div>
 
+              {/* Botón Atrás en barra superior */}
+              {(filtroDistrito || filtroLocal) && (
+                <button
+                  onClick={() => {
+                    if (filtroLocal) {
+                      setFiltroLocal('');
+                    } else if (filtroDistrito) {
+                      setFiltroDistrito('');
+                    }
+                  }}
+                  className="px-2.5 py-1.5 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors border border-red-200 flex items-center gap-1 shadow-2xs"
+                  title={filtroLocal ? `Volver a locales de ${nombreDistritoActual}` : 'Volver a todos los distritos'}
+                >
+                  <ArrowLeft size={13} />
+                  <span>Atrás</span>
+                </button>
+              )}
+
               {/* Selector de Distrito */}
               <select
                 value={filtroDistrito}
@@ -749,13 +779,28 @@ const ResultadosAdminPage = () => {
                     </p>
                   </div>
 
-                  <button
-                    onClick={() => exportarGraficoComoImagen('grafico-desglose-territorial', `desglose-${filtroDistrito ? 'locales' : 'distritos'}`)}
-                    className="no-export p-1.5 text-gray-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-gray-200"
-                    title="Descargar imagen PNG de este gráfico"
-                  >
-                    <Download size={15} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {(filtroDistrito || filtroLocal) && (
+                      <button
+                        onClick={() => {
+                          if (filtroLocal) setFiltroLocal('');
+                          else setFiltroDistrito('');
+                        }}
+                        className="no-export inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg border border-gray-300 transition-colors shadow-2xs"
+                        title={filtroLocal ? `Volver a locales de ${nombreDistritoActual}` : 'Volver a todos los distritos'}
+                      >
+                        <ArrowLeft size={13} />
+                        <span>Atrás</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => exportarGraficoComoImagen('grafico-desglose-territorial', `desglose-${filtroDistrito ? 'locales' : 'distritos'}`)}
+                      className="no-export p-1.5 text-gray-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-gray-200"
+                      title="Descargar imagen PNG de este gráfico"
+                    >
+                      <Download size={15} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="h-80">
@@ -1004,9 +1049,96 @@ const ResultadosAdminPage = () => {
           {/* ===================================================== */}
           <Card 
             title={
-              filtroDistrito 
-                ? `🏢 Desglose por Locales de Votación en este Distrito (${localesStats.length} locales)` 
-                : `📍 Desglose de Avance y Votos por Distritos de Huamanga (${distritosStats.length} distritos)`
+              <div className="flex items-center gap-3">
+                {(filtroDistrito || filtroLocal) && (
+                  <button
+                    onClick={() => {
+                      if (filtroLocal) {
+                        setFiltroLocal('');
+                      } else if (filtroDistrito) {
+                        setFiltroDistrito('');
+                        setFiltroLocal('');
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold rounded-lg transition-colors border border-red-200 shadow-xs cursor-pointer"
+                    title={filtroLocal ? `Volver a todos los locales de ${nombreDistritoActual}` : 'Volver al listado general de distritos'}
+                  >
+                    <ArrowLeft size={15} />
+                    <span>Atrás</span>
+                  </button>
+                )}
+                <div>
+                  <h3 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                    {filtroLocal ? (
+                      <>
+                        <Building2 size={18} className="text-red-600" />
+                        <span>Desglose por Local: {nombreLocalActual}</span>
+                      </>
+                    ) : filtroDistrito ? (
+                      <>
+                        <Building2 size={18} className="text-red-600" />
+                        <span>Desglose por Locales de {nombreDistritoActual} ({localesStats.length} locales)</span>
+                      </>
+                    ) : (
+                      <>
+                        <MapPin size={18} className="text-red-600" />
+                        <span>Desglose de Avance y Votos por Distritos de Huamanga ({distritosStats.length} distritos)</span>
+                      </>
+                    )}
+                  </h3>
+
+                  {/* Breadcrumbs de navegación */}
+                  <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
+                    <button
+                      onClick={() => { setFiltroDistrito(''); setFiltroLocal(''); }}
+                      className={`hover:underline cursor-pointer ${!filtroDistrito ? 'font-bold text-red-700' : 'text-gray-600'}`}
+                    >
+                      Huamanga
+                    </button>
+                    {filtroDistrito && (
+                      <>
+                        <span className="text-gray-400">/</span>
+                        <button
+                          onClick={() => setFiltroLocal('')}
+                          className={`hover:underline cursor-pointer ${filtroDistrito && !filtroLocal ? 'font-bold text-red-700' : 'text-gray-600'}`}
+                        >
+                          {nombreDistritoActual}
+                        </button>
+                      </>
+                    )}
+                    {filtroLocal && (
+                      <>
+                        <span className="text-gray-400">/</span>
+                        <span className="font-bold text-red-700">{nombreLocalActual}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            }
+            action={
+              (filtroDistrito || filtroLocal) && (
+                <div className="flex items-center gap-2">
+                  {filtroLocal && (
+                    <button
+                      onClick={() => setFiltroLocal('')}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg border border-gray-300 transition-colors"
+                      title={`Quitar selección de local y ver todos los locales de ${nombreDistritoActual}`}
+                    >
+                      <ArrowLeft size={12} />
+                      <span>Ver todos los locales ({nombreDistritoActual})</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setFiltroDistrito(''); setFiltroLocal(''); }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg border border-gray-300 transition-colors"
+                    title="Restablecer a todos los distritos"
+                  >
+                    <X size={12} />
+                    <span>Ver todos los distritos</span>
+                  </button>
+                </div>
+              )
             }
           >
             <div className="overflow-x-auto">
@@ -1023,26 +1155,50 @@ const ResultadosAdminPage = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
                   {filtroDistrito ? (
-                    localesStats.map((l) => (
-                      <tr key={l.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-3 font-bold text-gray-900">
-                          {l.nombre}
-                          <span className="block text-xs font-normal text-gray-500">{l.direccion}</span>
-                        </td>
-                        <td className="px-4 py-3 text-center font-mono">{l.total_mesas}</td>
-                        <td className="px-4 py-3 text-center font-mono font-bold text-emerald-700">{l.mesas_verificadas}</td>
-                        <td className="px-4 py-3 text-right font-mono font-extrabold text-gray-900">{(l.votos_contados || 0).toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right font-mono font-black text-red-700">{l.porcentaje_avance}%</td>
-                        <td className="px-4 py-3 text-center no-export">
-                          <button
-                            onClick={() => setFiltroLocal(String(l.id))}
-                            className="px-2.5 py-1 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors border border-red-200"
-                          >
-                            Filtrar este Local
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                    localesStats.map((l) => {
+                      const esSeleccionado = String(l.id) === String(filtroLocal);
+                      return (
+                        <tr 
+                          key={l.id} 
+                          className={`transition-colors ${esSeleccionado ? 'bg-red-50/70 border-l-4 border-red-600' : 'hover:bg-gray-50'}`}
+                        >
+                          <td className="px-4 py-3 font-bold text-gray-900">
+                            <div className="flex items-center gap-2">
+                              <span>{l.nombre}</span>
+                              {esSeleccionado && (
+                                <span className="px-2 py-0.5 text-[10px] font-black uppercase rounded bg-red-600 text-white shadow-xs">
+                                  Seleccionado
+                                </span>
+                              )}
+                            </div>
+                            <span className="block text-xs font-normal text-gray-500">{l.direccion}</span>
+                          </td>
+                          <td className="px-4 py-3 text-center font-mono">{l.total_mesas}</td>
+                          <td className="px-4 py-3 text-center font-mono font-bold text-emerald-700">{l.mesas_verificadas}</td>
+                          <td className="px-4 py-3 text-right font-mono font-extrabold text-gray-900">{(l.votos_contados || 0).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono font-black text-red-700">{l.porcentaje_avance}%</td>
+                          <td className="px-4 py-3 text-center no-export">
+                            {esSeleccionado ? (
+                              <button
+                                onClick={() => setFiltroLocal('')}
+                                className="px-2.5 py-1 text-xs font-bold text-gray-700 bg-white hover:bg-gray-100 rounded-lg transition-colors border border-gray-300 flex items-center gap-1 mx-auto shadow-2xs"
+                                title="Quitar selección de este local"
+                              >
+                                <X size={12} />
+                                Quitar Filtro
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => setFiltroLocal(String(l.id))}
+                                className="px-2.5 py-1 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors border border-red-200"
+                              >
+                                Filtrar este Local
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     distritosStats.map((d) => (
                       <tr key={d.id} className="hover:bg-gray-50 transition-colors">
@@ -1056,7 +1212,10 @@ const ResultadosAdminPage = () => {
                         <td className="px-4 py-3 text-right font-mono font-black text-red-700">{d.porcentaje_avance}%</td>
                         <td className="px-4 py-3 text-center no-export">
                           <button
-                            onClick={() => setFiltroDistrito(String(d.id))}
+                            onClick={() => {
+                              setFiltroDistrito(String(d.id));
+                              setFiltroLocal('');
+                            }}
                             className="px-2.5 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-200 flex items-center gap-1 mx-auto"
                           >
                             Desglosar Locales
