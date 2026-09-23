@@ -16,13 +16,26 @@ const generarTextoReporte = (item, detalles) => {
     '==================================================',
     `ACTA ELECTORAL ESCRUTADA Y VERIFICADA (${tipo})`,
     '==================================================',
-    `Distrito:           ${item.distrito_nombre || 'N/A'}`,
-    `Local de Votación:  ${item.local_nombre || 'N/A'}`,
-    `Dirección Local:    ${item.local_direccion || 'N/A'}`,
-    `Mesa de Sufragio:   ${item.numero_mesa}`,
-    `Electores Hábiles:  ${item.total_electores_habiles || 0}`,
+    `Distrito:            ${item.distrito_nombre || 'N/A'}`,
+    `Local de Votación:   ${item.local_nombre || 'N/A'}`,
+    `Dirección Local:     ${item.local_direccion || 'N/A'}`,
+    `Mesa de Sufragio:    ${item.numero_mesa}`,
+    `Electores Hábiles:   ${item.total_electores_habiles || 0}`,
+    '--------------------------------------------------',
+    'DATOS DE LOS RESPONSABLES DE LA MESA / LOCAL:',
+    '--------------------------------------------------',
+    'PERSONERO DE MESA:',
+    `  Nombre Completo:   ${item.personero_nombre || 'Sin asignar'}`,
+    `  DNI:               ${item.personero_dni || 'N/A'}`,
+    `  Teléfono/Contacto: ${item.personero_telefono || 'No registrado'}`,
+    '',
+    'COORDINADOR DE LOCAL:',
+    `  Nombre Completo:   ${item.coordinador_nombre || 'Sin asignar'}`,
+    `  DNI:               ${item.coordinador_dni || 'N/A'}`,
+    `  Teléfono/Contacto: ${item.coordinador_telefono || 'No registrado'}`,
     '--------------------------------------------------',
     'VOTOS POR CANDIDATO / ORGANIZACIÓN POLÍTICA:',
+    '--------------------------------------------------',
   ];
 
   if (detalles && detalles.length > 0) {
@@ -60,6 +73,16 @@ const empaquetarActas = async (archive, tipoFiltro, distritoIdFiltro = null) => 
     .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
     .join('locales_votacion as l', 'm.local_id', 'l.id')
     .join('distritos as d', 'l.distrito_id', 'd.id')
+    .leftJoin('usuarios as u_per', 'rm.personero_id', 'u_per.id')
+    .leftJoin('asignacion_personeros as ap', function() {
+      this.on('m.id', '=', 'ap.mesa_id').andOn('ap.activo', '=', db.raw('true'));
+    })
+    .leftJoin('usuarios as u_per_mesa', 'ap.usuario_id', 'u_per_mesa.id')
+    .leftJoin('asignacion_coordinadores as ac', function() {
+      this.on('l.id', '=', 'ac.local_id').andOn('ac.activo', '=', db.raw('true'));
+    })
+    .leftJoin('usuarios as u_coord', 'ac.usuario_id', 'u_coord.id')
+    .leftJoin('usuarios as u_ver', 'rm.verificado_por', 'u_ver.id')
     .where('rm.estado', 'verificado');
 
   if (tipoFiltro) {
@@ -76,7 +99,13 @@ const empaquetarActas = async (archive, tipoFiltro, distritoIdFiltro = null) => 
     'm.total_electores_habiles',
     'l.nombre as local_nombre',
     'l.direccion as local_direccion',
-    'd.nombre as distrito_nombre'
+    'd.nombre as distrito_nombre',
+    db.raw("COALESCE(NULLIF(TRIM(CONCAT(u_per.nombres, ' ', u_per.apellidos)), ''), NULLIF(TRIM(CONCAT(u_per_mesa.nombres, ' ', u_per_mesa.apellidos)), ''), 'Sin asignar') as personero_nombre"),
+    db.raw("COALESCE(u_per.dni, u_per_mesa.dni, 'N/A') as personero_dni"),
+    db.raw("COALESCE(u_per.telefono, u_per_mesa.telefono, 'No registrado') as personero_telefono"),
+    db.raw("COALESCE(NULLIF(TRIM(CONCAT(u_coord.nombres, ' ', u_coord.apellidos)), ''), NULLIF(TRIM(CONCAT(u_ver.nombres, ' ', u_ver.apellidos)), ''), 'Sin asignar') as coordinador_nombre"),
+    db.raw("COALESCE(u_coord.dni, u_ver.dni, 'N/A') as coordinador_dni"),
+    db.raw("COALESCE(u_coord.telefono, u_ver.telefono, 'No registrado') as coordinador_telefono")
   ).orderBy('d.nombre', 'asc')
    .orderBy('l.nombre', 'asc')
    .orderBy('m.numero_mesa', 'asc');

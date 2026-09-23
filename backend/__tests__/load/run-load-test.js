@@ -25,7 +25,7 @@ let dbInstance = null;
 
 const CONCURRENCY = parseInt(process.argv[2] || '50', 10);
 const DURATION_SECONDS = parseInt(process.argv[3] || '10', 10);
-let BASE_URL = process.argv[4] || process.env.API_URL || 'http://localhost:3000';
+let BASE_URL = process.argv[4] || process.env.API_URL || null;
 
 const secret = authConfig.secret || process.env.JWT_SECRET || 'secret';
 const adminToken = jwt.sign({ id: 1, dni: '00000000', rol: 'admin' }, secret, { expiresIn: '1h' });
@@ -105,9 +105,11 @@ function hacerPeticion(endpoint, targetBaseUrl = BASE_URL) {
 }
 
 async function asegurarServidor() {
-  const prueba = await hacerPeticion({ path: '/api/health', method: 'GET', token: null }, BASE_URL);
-  if (prueba.statusCode === 200) {
-    return { server: null, baseUrl: BASE_URL };
+  if (BASE_URL) {
+    const prueba = await hacerPeticion({ path: '/api/health', method: 'GET', token: null }, BASE_URL);
+    if (prueba.statusCode === 200) {
+      return { server: null, baseUrl: BASE_URL };
+    }
   }
 
   const { app } = await import('../../src/app.js');

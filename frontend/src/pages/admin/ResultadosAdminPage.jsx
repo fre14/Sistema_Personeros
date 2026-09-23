@@ -12,7 +12,7 @@ import {
   BarChart3, Eye, FileText, CheckCircle2, AlertTriangle, 
   Image as ImageIcon, Filter, X, RefreshCw, PieChart as PieIcon, 
   Layers, ExternalLink, Activity, Download, MapPin, Building2,
-  ChevronRight, TrendingUp, Vote, Award, ShieldCheck, Check, ArrowLeft
+  ChevronRight, TrendingUp, Vote, Award, ShieldCheck, Check, ArrowLeft, Phone
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -72,11 +72,15 @@ const ResultadosAdminPage = () => {
   const [totalPages, setTotalPages] = useState(1);
   const [totalMesas, setTotalMesas] = useState(0);
 
-  // Modal Detalle de Mesa y Acta
+  // Modal Detalle y Auditoría de Mesa y Acta
   const [selectedResultado, setSelectedResultado] = useState(null);
   const [modalDetalleOpen, setModalDetalleOpen] = useState(false);
   const [loadingDetalle, setLoadingDetalle] = useState(false);
   const [zoomFoto, setZoomFoto] = useState(false);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [obsModalOpen, setObsModalOpen] = useState(false);
+  const [observacionTexto, setObservacionTexto] = useState('');
+  const [modalEleccionTipo, setModalEleccionTipo] = useState('provincial');
 
   const { socket } = useSocket();
 
@@ -301,33 +305,133 @@ const ResultadosAdminPage = () => {
     toast.success('Filtros sincronizados con la tabla de mesas');
   };
 
-  const handleVerDetalle = async (mesa) => {
+  const handleVerDetalle = async (mesa, tipoForzado = null) => {
     setLoadingDetalle(true);
     setModalDetalleOpen(true);
     setSelectedResultado(null);
     setZoomFoto(false);
+    const tipo = tipoForzado || tipoEleccion;
+    setModalEleccionTipo(tipo);
 
     try {
       const mesaRes = await get(`/mesas/${mesa.id}`);
       const mesaData = mesaRes.data?.data || mesaRes.data;
 
-      if (mesaData?.resultado?.id) {
-        const detalleRes = await get(`/resultados/${mesaData.resultado.id}`);
-        setSelectedResultado({
-          ...mesaData,
-          resultadoDetalle: detalleRes.data?.data || detalleRes.data
-        });
-      } else {
-        setSelectedResultado({
-          ...mesaData,
-          resultadoDetalle: null
-        });
+      const targetResultObj = tipo === 'distrital' ? mesaData.resultado_distrital : mesaData.resultado_provincial;
+
+      let detalleData = null;
+      if (targetResultObj?.id) {
+        const detalleRes = await get(`/resultados/${targetResultObj.id}`);
+        detalleData = detalleRes.data?.data || detalleRes.data;
       }
+
+      setSelectedResultado({
+        mesa: mesaData,
+        tipoActivo: tipo,
+        resultadoDetalle: detalleData,
+        targetResultadoId: targetResultObj?.id || null,
+        estadoActual: targetResultObj?.estado || (tipo === 'distrital' ? (mesaData.estado_distrital || 'pendiente') : mesaData.estado) || 'pendiente',
+        personero: mesaData.personero,
+        coordinador: mesaData.coordinador,
+        tieneDistrital: Boolean(mesaData.tiene_eleccion_distrital || mesaData.estado_distrital !== null),
+      });
     } catch (error) {
       console.error('Error cargando detalle:', error);
       toast.error('No se pudo cargar el detalle del acta');
     } finally {
       setLoadingDetalle(false);
+    }
+  };
+
+  const handleCambiarTipoModal = async (nuevoTipo) => {
+    if (!selectedResultado?.mesa) return;
+    setModalEleccionTipo(nuevoTipo);
+    setLoadingDetalle(true);
+    try {
+      const mesaData = selectedResultado.mesa;
+      const targetResultObj = nuevoTipo === 'distrital' ? mesaData.resultado_distrital : mesaData.resultado_provincial;
+
+      let detalleData = null;
+      if (targetResultObj?.id) {
+        const detalleRes = await get(`/resultados/${targetResultObj.id}`);
+        detalleData = detalleRes.data?.data || detalleRes.data;
+      }
+
+      setSelectedResultado(prev => ({
+        ...prev,
+        tipoActivo: nuevoTipo,
+        resultadoDetalle: detalleData,
+        targetResultadoId: targetResultObj?.id || null,
+        estadoActual: targetResultObj?.estado || (nuevoTipo === 'distrital' ? (mesaData.estado_distrital || 'pendiente') : mesaData.estado) || 'pendiente',
+      }));
+    } catch (error) {
+      console.error('Error cambiando tipo en modal:', error);
+      toast.error('No se pudo cargar el resultado de esta elección');
+    } finally {
+      setLoadingDetalle(false);
+    }
+  };
+
+  const handleAprobarAuditoria = async () => {
+    const resId = selectedResultado?.targetResultadoId || selectedResultado?.resultadoDetalle?.id;
+    if (!resId) {
+      toast.error('No hay acta registrada para aprobar en esta elección');
+      return;
+    }
+    const numMesa = selectedResultado?.mesa?.numero_mesa || '';
+    if (!window.confirm(`¿Confirmas que los votos coinciden con el acta física y deseas APROBAR y VERIFICAR el acta ${modalEleccionTipo.toUpperCase()} de la mesa N° ${numMesa}?`)) {
+      return;
+    }
+
+    setAuditLoading(true);
+    try {
+      await api.put(`/resultados/${resId}/verificar`);
+      toast.success(`✅ Acta ${modalEleccionTipo} verificada y aprobada correctamente`);
+      fetchEstadisticas();
+      fetchMesas();
+      await handleVerDetalle(selectedResultado.mesa, modalEleccionTipo);
+    } catch (error) {
+      console.error('Error al verificar:', error);
+      toast.error(error.response?.data?.message || 'Error al verificar el acta');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const handleAbrirObservacion = () => {
+    const resId = selectedResultado?.targetResultadoId || selectedResultado?.resultadoDetalle?.id;
+    if (!resId) {
+      toast.error('No hay acta registrada para observar en esta elección');
+      return;
+    }
+    setObservacionTexto('');
+    setObsModalOpen(true);
+  };
+
+  const handleConfirmarObservacion = async (e) => {
+    if (e) e.preventDefault();
+    const resId = selectedResultado?.targetResultadoId || selectedResultado?.resultadoDetalle?.id;
+    if (!resId) return;
+
+    if (!observacionTexto.trim()) {
+      toast.error('Debe indicar el motivo de la observación');
+      return;
+    }
+
+    setAuditLoading(true);
+    try {
+      await api.put(`/resultados/${resId}/observar`, { observacion: observacionTexto.trim() });
+      toast.success(`⚠️ Acta ${modalEleccionTipo} marcada como observada`);
+      setObsModalOpen(false);
+      setObservacionTexto('');
+      fetchEstadisticas();
+      fetchMesas();
+      await handleVerDetalle(selectedResultado.mesa, modalEleccionTipo);
+    } catch (error) {
+      console.error('Error al observar:', error);
+      toast.error(error.response?.data?.message || 'Error al observar el acta');
+    } finally {
+      setAuditLoading(false);
     }
   };
 
@@ -1363,7 +1467,13 @@ const ResultadosAdminPage = () => {
                   {row.personero_nombre ? (
                     <div>
                       <p className="font-semibold text-xs text-gray-900">{row.personero_nombre}</p>
-                      <p className="text-[11px] text-gray-500">DNI: {row.personero_dni}</p>
+                      <p className="text-[11px] text-gray-500 font-mono">DNI: {row.personero_dni}</p>
+                      {row.personero_telefono && row.personero_telefono !== 'No registrado' && (
+                        <p className="text-[11px] text-emerald-700 font-medium flex items-center gap-1 mt-0.5">
+                          <Phone size={10} />
+                          <span>{row.personero_telefono}</span>
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <span className="text-xs text-gray-400 italic">Sin asignar</span>
@@ -1372,12 +1482,12 @@ const ResultadosAdminPage = () => {
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <Button
                     size="sm"
-                    variant={row.estado === 'pendiente' ? 'secondary' : 'primary'}
+                    variant={estadoAMostrar === 'pendiente' ? 'secondary' : 'primary'}
                     onClick={() => handleVerDetalle(row)}
-                    className="flex items-center gap-1 text-xs"
+                    className="flex items-center gap-1.5 text-xs font-bold shadow-xs cursor-pointer"
                   >
-                    <Eye size={13} />
-                    Ver Detalle
+                    <ShieldCheck size={14} />
+                    <span>Auditar Acta</span>
                   </Button>
                 </td>
               </tr>
@@ -1412,117 +1522,333 @@ const ResultadosAdminPage = () => {
       )}
 
       {/* ========================================================= */}
-      {/* 4. MODAL DETALLE DE MESA Y VISOR DE ACTA CON ZOOM         */}
+      {/* 4. MODAL DETALLE Y AUDITORÍA DE MESA Y ACTA CON ZOOM      */}
       {/* ========================================================= */}
+      {(() => {
+        const rawPhotoUrl = selectedResultado?.resultadoDetalle?.foto_acta_url_presigned || selectedResultado?.resultadoDetalle?.foto_acta_url;
+        const modalPhotoUrl = rawPhotoUrl
+          ? (rawPhotoUrl.startsWith('http://') || rawPhotoUrl.startsWith('https://') || rawPhotoUrl.startsWith('/') ? rawPhotoUrl : `/${rawPhotoUrl}`)
+          : null;
+        const listaDetallesVotos = selectedResultado?.resultadoDetalle?.detalles || selectedResultado?.resultadoDetalle?.votos_candidatos || [];
+
+        return (
+          <Modal
+            isOpen={modalDetalleOpen}
+            onClose={() => { setModalDetalleOpen(false); setSelectedResultado(null); }}
+            title={`🗳️ Auditoría Oficial de Mesa N° ${selectedResultado?.mesa?.numero_mesa || ''}`}
+            size="lg"
+          >
+            {loadingDetalle ? (
+              <div className="flex flex-col items-center justify-center p-8">
+                <RefreshCw className="animate-spin text-red-600 mb-2" size={32} />
+                <p className="text-xs text-gray-500 font-medium">Cargando datos y acta de la mesa...</p>
+              </div>
+            ) : selectedResultado ? (
+              <div className="space-y-4">
+                {/* Selector de Elección (Provincial / Distrital) si el distrito tiene distrital */}
+                {selectedResultado.tieneDistrital && (
+                  <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-bold border border-gray-200">
+                    <button
+                      type="button"
+                      onClick={() => handleCambiarTipoModal('provincial')}
+                      className={`flex-1 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        modalEleccionTipo === 'provincial' ? 'bg-red-700 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      🏛️ Elección Provincial ({selectedResultado.mesa?.resultado_provincial ? selectedResultado.mesa.resultado_provincial.estado.toUpperCase() : 'SIN TRANSMISIÓN'})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCambiarTipoModal('distrital')}
+                      className={`flex-1 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        modalEleccionTipo === 'distrital' ? 'bg-red-700 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      🏘️ Elección Distrital ({selectedResultado.mesa?.resultado_distrital ? selectedResultado.mesa.resultado_distrital.estado.toUpperCase() : 'SIN TRANSMISIÓN'})
+                    </button>
+                  </div>
+                )}
+
+                {/* Cabecera de Datos Territoriales y Estado */}
+                <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <span className="text-gray-500 block">Distrito:</span>
+                    <strong className="text-gray-900">{selectedResultado.mesa?.distrito_nombre}</strong>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block">Local de Votación:</span>
+                    <strong className="text-gray-900">{selectedResultado.mesa?.local_nombre}</strong>
+                    <span className="block text-[10px] text-gray-500">{selectedResultado.mesa?.local_direccion}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block">Estado del Acta ({modalEleccionTipo}):</span>
+                    <Badge variant={selectedResultado.estadoActual}>{selectedResultado.estadoActual}</Badge>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block">Electores Hábiles:</span>
+                    <strong className="font-mono text-gray-900">{selectedResultado.mesa?.total_electores_habiles || 300}</strong>
+                  </div>
+                </div>
+
+                {/* Datos de Personero y Coordinador con Teléfono y DNI */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                  {/* Personero */}
+                  <div className="bg-white p-2.5 rounded-lg border border-gray-200">
+                    <span className="text-[10px] font-black uppercase text-red-700 tracking-wide block mb-1">
+                      👤 Personero de Mesa
+                    </span>
+                    {selectedResultado.personero ? (
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-gray-900">{selectedResultado.personero.nombres} {selectedResultado.personero.apellidos}</p>
+                        <p className="text-gray-600 font-mono text-[11px]">DNI: {selectedResultado.personero.dni}</p>
+                        <p className="text-emerald-700 font-bold flex items-center gap-1 text-[11px]">
+                          <Phone size={11} />
+                          {selectedResultado.personero.telefono && selectedResultado.personero.telefono !== 'No registrado' ? (
+                            <a href={`tel:${selectedResultado.personero.telefono}`} className="hover:underline">
+                              {selectedResultado.personero.telefono}
+                            </a>
+                          ) : (
+                            <span className="text-gray-400 font-normal">Sin teléfono registrado</span>
+                          )}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-gray-400 italic">No asignado</p>
+                    )}
+                  </div>
+
+                  {/* Coordinador */}
+                  <div className="bg-white p-2.5 rounded-lg border border-gray-200">
+                    <span className="text-[10px] font-black uppercase text-purple-700 tracking-wide block mb-1">
+                      🛡️ Coordinador de Local
+                    </span>
+                    {selectedResultado.coordinador ? (
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-gray-900">{selectedResultado.coordinador.nombres} {selectedResultado.coordinador.apellidos}</p>
+                        <p className="text-gray-600 font-mono text-[11px]">DNI: {selectedResultado.coordinador.dni}</p>
+                        <p className="text-emerald-700 font-bold flex items-center gap-1 text-[11px]">
+                          <Phone size={11} />
+                          {selectedResultado.coordinador.telefono && selectedResultado.coordinador.telefono !== 'No registrado' ? (
+                            <a href={`tel:${selectedResultado.coordinador.telefono}`} className="hover:underline">
+                              {selectedResultado.coordinador.telefono}
+                            </a>
+                          ) : (
+                            <span className="text-gray-400 font-normal">Sin teléfono registrado</span>
+                          )}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-gray-400 italic">No asignado</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Fotografía del Acta */}
+                {modalPhotoUrl ? (
+                  <div className="bg-gray-900 p-2 rounded-xl text-center">
+                    <div className="flex justify-between items-center px-2 py-1 text-white text-xs">
+                      <span className="flex items-center gap-1 text-gray-300">
+                        <ImageIcon size={14} /> Fotografía del Acta Transmitida ({modalEleccionTipo.toUpperCase()})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setZoomFoto(!zoomFoto)}
+                        className="text-red-400 hover:text-red-300 font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <ExternalLink size={13} />
+                        {zoomFoto ? 'Reducir' : 'Ampliar Zoom'}
+                      </button>
+                    </div>
+                    <div className={`overflow-auto transition-all ${zoomFoto ? 'max-h-[70vh]' : 'max-h-64'}`}>
+                      <img
+                        src={modalPhotoUrl}
+                        alt={`Acta Mesa ${selectedResultado.mesa?.numero_mesa}`}
+                        className="w-full h-auto object-contain rounded-lg mx-auto"
+                        onError={(e) => {
+                          e.target.onerror = null;
+                          e.target.src = 'https://placehold.co/600x400/1e293b/white?text=Foto+del+Acta+No+Disponible';
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 text-center text-amber-800 text-xs">
+                    <AlertTriangle size={24} className="mx-auto mb-1 text-amber-600" />
+                    Esta mesa aún no tiene fotografía de acta transmitida para la elección {modalEleccionTipo}.
+                  </div>
+                )}
+
+                {/* Votos del Acta */}
+                {listaDetallesVotos.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-bold text-gray-700 uppercase">
+                      Votos Registrados en el Acta ({modalEleccionTipo.toUpperCase()})
+                    </h4>
+                    <div className="max-h-52 overflow-y-auto border border-gray-200 rounded-xl">
+                      <table className="min-w-full divide-y divide-gray-200 text-xs">
+                        <thead className="bg-gray-50 font-bold text-gray-600">
+                          <tr>
+                            <th className="px-3 py-2 text-center w-12">Lista</th>
+                            <th className="px-3 py-2 text-left">Candidato / Organización</th>
+                            <th className="px-3 py-2 text-center">Siglas</th>
+                            <th className="px-3 py-2 text-right">Votos</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 bg-white font-mono">
+                          {listaDetallesVotos.map((v, i) => (
+                            <tr key={i} className="hover:bg-gray-50">
+                              <td className="px-3 py-1.5 text-center font-bold text-red-700">
+                                <span className="w-5 h-5 rounded-full bg-red-100 text-red-800 inline-flex items-center justify-center text-[10px]">
+                                  {v.numero_lista}
+                                </span>
+                              </td>
+                              <td className="px-3 py-1.5 font-sans">
+                                <p className="font-bold text-gray-900">{v.nombre_completo || v.nombre}</p>
+                                <p className="text-[10px] text-gray-500">{v.organizacion_politica || v.organizacion}</p>
+                              </td>
+                              <td className="px-3 py-1.5 text-center">
+                                <span className="px-1.5 py-0.5 rounded bg-gray-100 font-bold text-[10px]">
+                                  {v.siglas || '-'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-1.5 text-right font-black text-red-700">{v.votos}</td>
+                            </tr>
+                          ))}
+                          <tr className="bg-gray-50 font-bold">
+                            <td colSpan={3} className="px-3 py-1.5 font-sans">Votos en Blanco</td>
+                            <td className="px-3 py-1.5 text-right font-mono">{selectedResultado.resultadoDetalle?.votos_blanco || 0}</td>
+                          </tr>
+                          <tr className="bg-gray-50 font-bold">
+                            <td colSpan={3} className="px-3 py-1.5 font-sans">Votos Nulos</td>
+                            <td className="px-3 py-1.5 text-right font-mono">{selectedResultado.resultadoDetalle?.votos_nulo || 0}</td>
+                          </tr>
+                          <tr className="bg-gray-50 font-bold">
+                            <td colSpan={3} className="px-3 py-1.5 font-sans">Votos Impugnados</td>
+                            <td className="px-3 py-1.5 text-right font-mono">{selectedResultado.resultadoDetalle?.votos_impugnados || 0}</td>
+                          </tr>
+                          <tr className="bg-red-50 text-red-900 font-black">
+                            <td colSpan={3} className="px-3 py-2 font-sans">TOTAL VOTOS EMITIDOS</td>
+                            <td className="px-3 py-2 text-right text-sm font-mono">{selectedResultado.resultadoDetalle?.total_votos_emitidos || 0}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Observaciones registradas */}
+                {selectedResultado.resultadoDetalle && (
+                  <div className="space-y-1.5 text-xs">
+                    {selectedResultado.resultadoDetalle.observaciones_personero && (
+                      <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-blue-900">
+                        <strong>Observaciones del Personero:</strong> {selectedResultado.resultadoDetalle.observaciones_personero}
+                      </div>
+                    )}
+                    {selectedResultado.resultadoDetalle.observaciones_coordinador && (
+                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900">
+                        <strong>Observaciones de Auditoría / Coordinador:</strong> {selectedResultado.resultadoDetalle.observaciones_coordinador}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Barra de Acciones de Auditoría para Administrador */}
+                {selectedResultado.targetResultadoId ? (
+                  <div className="bg-amber-50/70 p-3.5 rounded-xl border border-amber-200 flex flex-wrap items-center justify-between gap-3 mt-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="text-amber-700" size={22} />
+                      <div>
+                        <span className="text-xs font-bold text-gray-900 block">
+                          Control de Auditoría ({modalEleccionTipo.toUpperCase()})
+                        </span>
+                        <span className="text-[11px] text-gray-600">
+                          Estado actual: <strong className="uppercase">{selectedResultado.estadoActual}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={auditLoading}
+                        onClick={handleAprobarAuditoria}
+                        className="px-3.5 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                        title="Aprobar y verificar el resultado como válido"
+                      >
+                        <CheckCircle2 size={15} />
+                        <span>Verificar y Aprobar</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={auditLoading}
+                        onClick={handleAbrirObservacion}
+                        className="px-3.5 py-1.5 text-xs font-bold text-red-700 bg-white hover:bg-red-50 rounded-lg border border-red-300 flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                        title="Observar y rechazar el acta"
+                      >
+                        <AlertTriangle size={15} className="text-red-600" />
+                        <span>Observar Acta</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-gray-100 p-3 rounded-xl border border-gray-200 text-center text-xs text-gray-600">
+                    El acta de la elección {modalEleccionTipo} aún no ha sido transmitida para esta mesa.
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </Modal>
+        );
+      })()}
+
+      {/* Modal para Motivo de Observación */}
       <Modal
-        isOpen={modalDetalleOpen}
-        onClose={() => { setModalDetalleOpen(false); setSelectedResultado(null); }}
-        title={`Detalle Oficial de Mesa N° ${selectedResultado?.numero_mesa || ''}`}
-        size="lg"
+        isOpen={obsModalOpen}
+        onClose={() => setObsModalOpen(false)}
+        title={`⚠️ Observar Acta (${modalEleccionTipo.toUpperCase()}) - Mesa N° ${selectedResultado?.mesa?.numero_mesa || ''}`}
       >
-        {loadingDetalle ? (
-          <div className="flex flex-col items-center justify-center p-8">
-            <RefreshCw className="animate-spin text-red-600 mb-2" size={32} />
-            <p className="text-xs text-gray-500 font-medium">Cargando información del acta...</p>
-          </div>
-        ) : selectedResultado ? (
-          <div className="space-y-4">
-            {/* Cabecera del Modal */}
-            <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div>
-                <span className="text-gray-500 block">Distrito:</span>
-                <strong className="text-gray-900">{selectedResultado.distrito_nombre}</strong>
-              </div>
-              <div>
-                <span className="text-gray-500 block">Local:</span>
-                <strong className="text-gray-900">{selectedResultado.local_nombre}</strong>
-              </div>
-              <div>
-                <span className="text-gray-500 block">Estado Actual:</span>
-                <Badge variant={selectedResultado.estado}>{selectedResultado.estado}</Badge>
-              </div>
-              <div>
-                <span className="text-gray-500 block">Electores Hábiles:</span>
-                <strong className="font-mono text-gray-900">{selectedResultado.total_electores_habiles || 300}</strong>
-              </div>
-            </div>
+        <form onSubmit={handleConfirmarObservacion} className="space-y-4">
+          <p className="text-xs text-gray-600">
+            Indica el motivo por el cual el acta está siendo observada. El personero será notificado para corregirla.
+          </p>
 
-            {/* Fotografía del Acta */}
-            {modalPhotoUrl ? (
-              <div className="bg-gray-900 p-2 rounded-xl text-center">
-                <div className="flex justify-between items-center px-2 py-1 text-white text-xs">
-                  <span className="flex items-center gap-1 text-gray-300">
-                    <ImageIcon size={14} /> Fotografía del Acta Transmitida
-                  </span>
-                  <button
-                    onClick={() => setZoomFoto(!zoomFoto)}
-                    className="text-red-400 hover:text-red-300 font-bold flex items-center gap-1"
-                  >
-                    <ExternalLink size={13} />
-                    {zoomFoto ? 'Reducir' : 'Ampliar Zoom'}
-                  </button>
-                </div>
-                <div className={`overflow-auto transition-all ${zoomFoto ? 'max-h-[70vh]' : 'max-h-64'}`}>
-                  <img
-                    src={modalPhotoUrl}
-                    alt={`Acta Mesa ${selectedResultado.numero_mesa}`}
-                    className="w-full h-auto object-contain rounded-lg mx-auto"
-                    onError={(e) => {
-                      e.target.onerror = null;
-                      e.target.src = 'https://placehold.co/600x400/1e293b/white?text=Foto+del+Acta+No+Disponible';
-                    }}
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 text-center text-amber-800 text-xs">
-                <AlertTriangle size={24} className="mx-auto mb-1 text-amber-600" />
-                Esta mesa aún no tiene fotografía de acta transmitida por el personero.
-              </div>
-            )}
-
-            {/* Votos del Acta */}
-            {selectedResultado.resultadoDetalle?.votos && (
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold text-gray-700 uppercase">Votos Registrados en el Acta</h4>
-                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-xl">
-                  <table className="min-w-full divide-y divide-gray-200 text-xs">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-3 py-2 text-left">Candidato / Opción</th>
-                        <th className="px-3 py-2 text-right">Votos</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white font-mono">
-                      {selectedResultado.resultadoDetalle.votos.map((v, i) => (
-                        <tr key={i}>
-                          <td className="px-3 py-1.5 font-bold font-sans text-gray-900">{v.candidato_nombre}</td>
-                          <td className="px-3 py-1.5 text-right font-extrabold text-red-700">{v.votos}</td>
-                        </tr>
-                      ))}
-                      <tr className="bg-gray-50 font-bold">
-                        <td className="px-3 py-1.5 font-sans">Votos en Blanco</td>
-                        <td className="px-3 py-1.5 text-right">{selectedResultado.resultadoDetalle.votos_blanco || 0}</td>
-                      </tr>
-                      <tr className="bg-gray-50 font-bold">
-                        <td className="px-3 py-1.5 font-sans">Votos Nulos</td>
-                        <td className="px-3 py-1.5 text-right">{selectedResultado.resultadoDetalle.votos_nulo || 0}</td>
-                      </tr>
-                      <tr className="bg-gray-50 font-bold">
-                        <td className="px-3 py-1.5 font-sans">Votos Impugnados</td>
-                        <td className="px-3 py-1.5 text-right">{selectedResultado.resultadoDetalle.votos_impugnados || 0}</td>
-                      </tr>
-                      <tr className="bg-red-50 text-red-900 font-black">
-                        <td className="px-3 py-2 font-sans">TOTAL VOTOS EMITIDOS</td>
-                        <td className="px-3 py-2 text-right text-sm">{selectedResultado.resultadoDetalle.total_votos_emitidos || 0}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              'Suma de votos no coincide con el total',
+              'Fotografía borrosa o ilegible',
+              'Acta cortada o datos incompletos',
+              'Discrepancia en votos de candidatos',
+            ].map((motivo, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setObservacionTexto(motivo)}
+                className="text-[11px] px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md border border-gray-300 transition-colors cursor-pointer"
+              >
+                {motivo}
+              </button>
+            ))}
           </div>
-        ) : null}
+
+          <textarea
+            rows={3}
+            required
+            value={observacionTexto}
+            onChange={(e) => setObservacionTexto(e.target.value)}
+            placeholder="Escribe aquí el motivo detallado de la observación..."
+            className="w-full text-xs p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none"
+          />
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setObsModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit" isLoading={auditLoading} className="bg-red-700 hover:bg-red-800 text-white">
+              Confirmar Observación
+            </Button>
+          </div>
+        </form>
       </Modal>
 
     </div>

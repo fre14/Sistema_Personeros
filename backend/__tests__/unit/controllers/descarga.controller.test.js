@@ -12,9 +12,12 @@ jest.unstable_mockModule('../../../src/services/storage.service.js', () => ({
   deleteActaImage: jest.fn(),
 }));
 
+let errorHandlers = {};
 const mockArchive = {
   pipe: jest.fn(),
-  on: jest.fn(),
+  on: jest.fn((event, cb) => {
+    errorHandlers[event] = cb;
+  }),
   append: jest.fn(),
   finalize: jest.fn().mockResolvedValue(undefined),
 };
@@ -33,10 +36,11 @@ describe('Descarga Controller — Pruebas Unitarias', () => {
   beforeEach(() => {
     mockDb.reset();
     jest.clearAllMocks();
+    errorHandlers = {};
   });
 
   describe('descargarProvincial', () => {
-    it('genera un archivo zip con actas provinciales verificadas', async () => {
+    it('genera un archivo zip con actas provinciales verificadas con datos de personero y coordinador', async () => {
       const actasMock = [
         {
           id: 1,
@@ -48,6 +52,14 @@ describe('Descarga Controller — Pruebas Unitarias', () => {
           local_nombre: 'IE Mariscal Caceres',
           local_direccion: 'Av Independencia 123',
           distrito_nombre: 'Ayacucho',
+          personero_nombre: 'Juan Perez',
+          personero_dni: '12345678',
+          personero_telefono: '999888777',
+          coordinador_nombre: 'Maria Lopez',
+          coordinador_dni: '87654321',
+          coordinador_telefono: '911222333',
+          observaciones_personero: 'Mesa instalada conforme',
+          observaciones_coordinador: 'Revisado y verificado',
           foto_acta_url: 'actas/001234/foto.jpg',
           votos_blanco: 5,
           votos_nulo: 3,
@@ -85,6 +97,30 @@ describe('Descarga Controller — Pruebas Unitarias', () => {
         'Content-Disposition',
         expect.stringMatching(/attachment; filename="actas_provinciales_.*\.zip"/)
       );
+      expect(mockArchive.append).toHaveBeenCalledWith(
+        expect.stringContaining('PERSONERO DE MESA:'),
+        expect.objectContaining({ name: expect.stringMatching(/reporte_.*\.txt/) })
+      );
+      expect(mockArchive.append).toHaveBeenCalledWith(
+        expect.stringContaining('999888777'),
+        expect.anything()
+      );
+      expect(mockArchive.append).toHaveBeenCalledWith(
+        expect.stringContaining('COORDINADOR DE LOCAL:'),
+        expect.anything()
+      );
+      expect(mockArchive.append).toHaveBeenCalledWith(
+        expect.stringContaining('911222333'),
+        expect.anything()
+      );
+      expect(mockArchive.append).toHaveBeenCalledWith(
+        expect.stringContaining('Observaciones Personero: Mesa instalada conforme'),
+        expect.anything()
+      );
+      expect(mockArchive.append).toHaveBeenCalledWith(
+        expect.stringContaining('Observaciones Coordinador: Revisado y verificado'),
+        expect.anything()
+      );
       expect(mockArchive.append).toHaveBeenCalled();
       expect(mockArchive.finalize).toHaveBeenCalled();
     });
@@ -102,6 +138,29 @@ describe('Descarga Controller — Pruebas Unitarias', () => {
         expect.objectContaining({ name: 'provincial/LEEME.txt' })
       );
       expect(mockArchive.finalize).toHaveBeenCalled();
+    });
+
+    it('ejecuta el handler de error del archive para provincial', async () => {
+      mockDb.queue('resultados_mesa', []);
+      const req = crearReq({ user: usuarioAdmin() });
+      const res = crearRes();
+      res.headersSent = false;
+
+      await descargarProvincial(req, res);
+      if (errorHandlers['error']) {
+        errorHandlers['error'](new Error('Zip error test'));
+        expect(res.status).toHaveBeenCalledWith(500);
+      }
+    });
+
+    it('captura excepcion y responde 500 en descargarProvincial', async () => {
+      mockDb.queueError('resultados_mesa', new Error('Fallo de BD'));
+      const req = crearReq({ user: usuarioAdmin() });
+      const res = crearRes();
+      res.headersSent = false;
+
+      await descargarProvincial(req, res);
+      expect(res.status).toHaveBeenCalledWith(500);
     });
   });
 
@@ -173,6 +232,29 @@ describe('Descarga Controller — Pruebas Unitarias', () => {
         expect.stringMatching(/actas_distritales_Andres_Avelino_Caceres_.*\.zip/)
       );
     });
+
+    it('ejecuta el handler de error del archive para distrital', async () => {
+      mockDb.queue('resultados_mesa', []);
+      const req = crearReq({ user: usuarioAdmin() });
+      const res = crearRes();
+      res.headersSent = false;
+
+      await descargarDistrital(req, res);
+      if (errorHandlers['error']) {
+        errorHandlers['error'](new Error('Zip error test distrital'));
+        expect(res.status).toHaveBeenCalledWith(500);
+      }
+    });
+
+    it('captura excepcion y responde 500 en descargarDistrital', async () => {
+      mockDb.queueError('distritos', new Error('DB error distrital'));
+      const req = crearReq({ user: usuarioAdmin(), query: { distrito_id: '5' } });
+      const res = crearRes();
+      res.headersSent = false;
+
+      await descargarDistrital(req, res);
+      expect(res.status).toHaveBeenCalledWith(500);
+    });
   });
 
   describe('descargarCompleta', () => {
@@ -214,6 +296,43 @@ describe('Descarga Controller — Pruebas Unitarias', () => {
         expect.stringMatching(/attachment; filename="actas_electorales_completas_.*\.zip"/)
       );
       expect(mockArchive.finalize).toHaveBeenCalled();
+    });
+
+    it('genera leeme cuando no hay actas en descargarCompleta', async () => {
+      mockDb.queue('resultados_mesa', []);
+
+      const req = crearReq({ user: usuarioAdmin() });
+      const res = crearRes();
+
+      await descargarCompleta(req, res);
+
+      expect(mockArchive.append).toHaveBeenCalledWith(
+        expect.stringContaining('No se encontraron actas electorales verificadas'),
+        expect.objectContaining({ name: 'LEEME.txt' })
+      );
+    });
+
+    it('ejecuta el handler de error del archive para completa', async () => {
+      mockDb.queue('resultados_mesa', []);
+      const req = crearReq({ user: usuarioAdmin() });
+      const res = crearRes();
+      res.headersSent = false;
+
+      await descargarCompleta(req, res);
+      if (errorHandlers['error']) {
+        errorHandlers['error'](new Error('Zip error test completa'));
+        expect(res.status).toHaveBeenCalledWith(500);
+      }
+    });
+
+    it('captura excepcion y responde 500 en descargarCompleta', async () => {
+      mockDb.queueError('resultados_mesa', new Error('DB crash completa'));
+      const req = crearReq({ user: usuarioAdmin() });
+      const res = crearRes();
+      res.headersSent = false;
+
+      await descargarCompleta(req, res);
+      expect(res.status).toHaveBeenCalledWith(500);
     });
   });
 });

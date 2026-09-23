@@ -935,6 +935,24 @@ describe('mesas.controller', () => {
     expect(res.body.data.resultado.id).toBe(500);
   });
 
+  it('getById resuelve personero y coordinador desde fallback si no hay asignacion activa', async () => {
+    mockDb.queue('mesas_sufragio', { id: 9, local_id: 4, numero_mesa: '045821' });
+    mockDb.queue('asignacion_personeros', undefined);
+    mockDb.queue('asignacion_coordinadores', undefined);
+    mockDb.queue('resultados_mesa', { id: 501, personero_id: 11, verificado_por: 12, tipo_eleccion: 'provincial' });
+    mockDb.queue('resultados_mesa', undefined);
+    mockDb.queue('usuarios', { id: 11, nombres: 'Carlos', apellidos: 'Personero', dni: '12345678', telefono: '987654321' });
+    mockDb.queue('usuarios', { id: 12, nombres: 'Diana', apellidos: 'Coord', dni: '87654321', telefono: '912345678' });
+
+    const req = crearReq({ user: usuarioAdmin(), params: { id: '9' } });
+    const res = crearRes();
+
+    await mesas.getById(req, res);
+
+    expect(res.body.data.personero.nombres).toBe('Carlos');
+    expect(res.body.data.coordinador.nombres).toBe('Diana');
+  });
+
   it('getById devuelve 404 si no existe', async () => {
     mockDb.queue('mesas_sufragio', undefined);
     const req = crearReq({ user: usuarioAdmin(), params: { id: '99' } });

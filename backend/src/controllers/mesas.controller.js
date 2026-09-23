@@ -18,10 +18,12 @@ export const getAll = async (req, res) => {
       .select(
         'mesas.*',
         'locales.nombre as local_nombre',
+        'locales.direccion as local_direccion',
         'locales.distrito_id',
         'distritos.nombre as distrito_nombre',
         'asignacion_personeros.id as asignacion_id',
         'usuarios.dni as personero_dni',
+        'usuarios.telefono as personero_telefono',
         db.raw("CONCAT(usuarios.nombres, ' ', usuarios.apellidos) as personero_nombre")
       );
     
@@ -62,15 +64,20 @@ export const getById = async (req, res) => {
     const mesa = await db('mesas_sufragio as mesas')
       .join('locales_votacion as locales', 'mesas.local_id', 'locales.id')
       .join('distritos', 'locales.distrito_id', 'distritos.id')
-      .select('mesas.*', 'locales.nombre as local_nombre', 'distritos.nombre as distrito_nombre')
+      .select('mesas.*', 'locales.nombre as local_nombre', 'locales.direccion as local_direccion', 'distritos.nombre as distrito_nombre', 'distritos.tiene_eleccion_distrital')
       .where('mesas.id', id).first();
       
     if (!mesa) return res.status(404).json({ success: false, message: 'Mesa no encontrada' });
     
-    const personero = await db('asignacion_personeros')
+    let personero = await db('asignacion_personeros')
       .join('usuarios', 'asignacion_personeros.usuario_id', 'usuarios.id')
-      .select('usuarios.id', 'usuarios.nombres', 'usuarios.apellidos', 'usuarios.dni')
+      .select('usuarios.id', 'usuarios.nombres', 'usuarios.apellidos', 'usuarios.dni', 'usuarios.telefono')
       .where({ 'asignacion_personeros.mesa_id': id, 'asignacion_personeros.activo': true }).first();
+
+    let coordinador = await db('asignacion_coordinadores')
+      .join('usuarios', 'asignacion_coordinadores.usuario_id', 'usuarios.id')
+      .select('usuarios.id', 'usuarios.nombres', 'usuarios.apellidos', 'usuarios.dni', 'usuarios.telefono')
+      .where({ 'asignacion_coordinadores.local_id': mesa.local_id, 'asignacion_coordinadores.activo': true }).first();
       
     const resultadoProvincial = await db('resultados_mesa')
       .where({ mesa_id: id, tipo_eleccion: 'provincial' })
@@ -81,12 +88,33 @@ export const getById = async (req, res) => {
       .where({ mesa_id: id, tipo_eleccion: 'distrital' })
       .orderBy('subido_en', 'desc')
       .first();
+
+    if (!personero) {
+      const personeroId = resultadoProvincial?.personero_id || resultadoDistrital?.personero_id;
+      if (personeroId) {
+        personero = await db('usuarios')
+          .select('id', 'nombres', 'apellidos', 'dni', 'telefono')
+          .where({ id: personeroId })
+          .first();
+      }
+    }
+
+    if (!coordinador) {
+      const verificadoPorId = resultadoProvincial?.verificado_por || resultadoDistrital?.verificado_por;
+      if (verificadoPorId) {
+        coordinador = await db('usuarios')
+          .select('id', 'nombres', 'apellidos', 'dni', 'telefono')
+          .where({ id: verificadoPorId })
+          .first();
+      }
+    }
       
     res.json({
       success: true,
       data: {
         ...mesa,
         personero,
+        coordinador,
         resultado: resultadoProvincial,
         resultado_provincial: resultadoProvincial,
         resultado_distrital: resultadoDistrital,
