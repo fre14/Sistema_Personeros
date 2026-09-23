@@ -266,6 +266,124 @@ describe('usuarios.controller', () => {
       expect(res.status).toHaveBeenCalledWith(500);
     });
   });
+
+  describe('remove', () => {
+    it('devuelve 404 si el usuario no existe', async () => {
+      mockDb.queue('usuarios', undefined);
+      const req = crearReq({ user: { id: 1 }, params: { id: '99' } });
+      const res = crearRes();
+
+      await usuarios.remove(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devuelve 400 si el usuario intenta eliminarse a si mismo', async () => {
+      mockDb.queue('usuarios', { id: 1, dni: '87654321' });
+      const req = crearReq({ user: { id: 1 }, params: { id: '1' } });
+      const res = crearRes();
+
+      await usuarios.remove(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.body.message).toContain('propia cuenta');
+    });
+
+    it('devuelve 400 si se intenta eliminar al admin maestro 00000000', async () => {
+      mockDb.queue('usuarios', { id: 2, dni: '00000000' });
+      const req = crearReq({ user: { id: 1 }, params: { id: '2' } });
+      const res = crearRes();
+
+      await usuarios.remove(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.body.message).toContain('administrador principal');
+    });
+
+    it('devuelve 400 si el usuario tiene actas en resultados_mesa', async () => {
+      mockDb.queue('usuarios', { id: 2, dni: '11112222' });
+      mockDb.queue('resultados_mesa', { total: '3' });
+      const req = crearReq({ user: { id: 1 }, params: { id: '2' } });
+      const res = crearRes();
+
+      await usuarios.remove(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.body.message).toContain('actas registradas');
+    });
+
+    it('elimina usuario y dependencias en transaccion cuando no tiene actas', async () => {
+      mockDb.queue('usuarios', { id: 2, dni: '11112222', nombres: 'Carlos', apellidos: 'Perez', rol: 'personero' });
+      mockDb.queue('resultados_mesa', { total: '0' });
+      mockDb.queue('asignacion_personeros', 1);
+      mockDb.queue('asignacion_coordinadores', 0);
+      mockDb.queue('historial_asignaciones', 0);
+      mockDb.queue('auditoria', 0);
+      mockDb.queue('usuarios', 1);
+
+      const req = crearReq({ user: { id: 1 }, params: { id: '2' } });
+      const res = crearRes();
+
+      await usuarios.remove(req, res);
+
+      expect(res.body.success).toBe(true);
+      expect(registrarAuditoria).toHaveBeenCalled();
+    });
+
+    it('responde 500 ante error inesperado', async () => {
+      mockDb.queueError('usuarios', new Error('error_db'));
+      const req = crearReq({ user: { id: 1 }, params: { id: '2' } });
+      const res = crearRes();
+
+      await usuarios.remove(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+    });
+  });
+
+  describe('bulkUpdateEstado', () => {
+    it('devuelve 400 si el rol no es personero ni coordinador', async () => {
+      const req = crearReq({ user: { id: 1 }, body: { rol: 'admin', activo: true } });
+      const res = crearRes();
+
+      await usuarios.bulkUpdateEstado(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devuelve 400 si activo no es booleano', async () => {
+      const req = crearReq({ user: { id: 1 }, body: { rol: 'personero', activo: 'si' } });
+      const res = crearRes();
+
+      await usuarios.bulkUpdateEstado(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('actualiza el estado de todos los personeros', async () => {
+      mockDb.queue('usuarios', 15);
+      const req = crearReq({ user: { id: 1 }, body: { rol: 'personero', activo: false } });
+      const res = crearRes();
+
+      await usuarios.bulkUpdateEstado(req, res);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.total).toBe(15);
+      expect(registrarAuditoria).toHaveBeenCalledWith(
+        'usuarios', 'bulk_update_status', 1, null, { rol: 'personero', activo: false, total_afectados: 15 }
+      );
+    });
+
+    it('responde 500 ante error de base de datos', async () => {
+      mockDb.queueError('usuarios', new Error('error_db'));
+      const req = crearReq({ user: { id: 1 }, body: { rol: 'coordinador', activo: true } });
+      const res = crearRes();
+
+      await usuarios.bulkUpdateEstado(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+    });
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════

@@ -55,7 +55,7 @@ const generarTextoReporte = (item, detalles) => {
   return lineas.join('\n');
 };
 
-const empaquetarActas = async (archive, tipoFiltro) => {
+const empaquetarActas = async (archive, tipoFiltro, distritoIdFiltro = null) => {
   let query = db('resultados_mesa as rm')
     .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
     .join('locales_votacion as l', 'm.local_id', 'l.id')
@@ -64,6 +64,10 @@ const empaquetarActas = async (archive, tipoFiltro) => {
 
   if (tipoFiltro) {
     query = query.where('rm.tipo_eleccion', tipoFiltro);
+  }
+
+  if (distritoIdFiltro) {
+    query = query.where('d.id', distritoIdFiltro);
   }
 
   const actas = await query.select(
@@ -162,9 +166,20 @@ export const descargarProvincial = async (req, res) => {
 
 export const descargarDistrital = async (req, res) => {
   try {
+    const { distrito_id } = req.query;
+    let distritoNombreSlug = '';
+    let distritoObj = null;
+
+    if (distrito_id) {
+      distritoObj = await db('distritos').where('id', distrito_id).first();
+      if (distritoObj) {
+        distritoNombreSlug = `_${sanitizeNombre(distritoObj.nombre)}`;
+      }
+    }
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="actas_distritales_${timestamp}.zip"`);
+    res.setHeader('Content-Disposition', `attachment; filename="actas_distritales${distritoNombreSlug}_${timestamp}.zip"`);
 
     const archive = new ZipArchive({ zlib: { level: 6 } });
     archive.pipe(res);
@@ -176,9 +191,10 @@ export const descargarDistrital = async (req, res) => {
       }
     });
 
-    const cantidad = await empaquetarActas(archive, 'distrital');
+    const cantidad = await empaquetarActas(archive, 'distrital', distrito_id ? Number(distrito_id) : null);
     if (cantidad === 0) {
-      archive.append('No se encontraron actas distritales verificadas para descargar.\n', {
+      const nomDist = distritoObj ? distritoObj.nombre : 'en este ámbito';
+      archive.append(`No se encontraron actas distritales verificadas para descargar (${nomDist}).\n`, {
         name: 'distrital/LEEME.txt',
       });
     }

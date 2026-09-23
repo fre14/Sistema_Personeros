@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { get, post, put, patch } from '../../services/api';
+import { get, post, put, patch, del } from '../../services/api';
 import Card from '../../components/ui/Card';
 import Table from '../../components/ui/Table';
 import Button from '../../components/ui/Button';
@@ -8,7 +8,7 @@ import Modal from '../../components/ui/Modal';
 import Input from '../../components/ui/Input';
 import Select from '../../components/ui/Select';
 import toast from 'react-hot-toast';
-import { Users, Plus, UserCheck, UserX, Edit2 } from 'lucide-react';
+import { Users, Plus, UserCheck, UserX, Edit2, Trash2, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 const UsuariosPage = () => {
   const [usuarios, setUsuarios] = useState([]);
@@ -26,6 +26,14 @@ const UsuariosPage = () => {
   const [password, setPassword] = useState('');
   const [telefono, setTelefono] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Bulk State
+  const [bulkModal, setBulkModal] = useState({ open: false, rol: '', activo: true, title: '', message: '' });
+  const [loadingBulk, setLoadingBulk] = useState(false);
+
+  // Delete State
+  const [deleteModal, setDeleteModal] = useState({ open: false, usuario: null });
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetchUsuarios();
@@ -130,6 +138,56 @@ const UsuariosPage = () => {
     }
   };
 
+  // Manejador de Acción Masiva
+  const handleOpenBulkModal = (rol, activo) => {
+    const rolStr = rol === 'personero' ? 'Personeros de Mesa' : 'Coordinadores de Local';
+    const accionStr = activo ? 'HABILITAR' : 'DESHABILITAR';
+    setBulkModal({
+      open: true,
+      rol,
+      activo,
+      title: `${accionStr} Todos los ${rolStr}`,
+      message: `¿Estás seguro de que deseas ${accionStr.toLowerCase()} a TODOS los ${rolStr.toLowerCase()} del sistema? ${activo ? 'Podrán iniciar sesión y registrar datos.' : 'No podrán acceder al sistema hasta que sean reactivados.'}`
+    });
+  };
+
+  const handleConfirmBulk = async () => {
+    setLoadingBulk(true);
+    try {
+      const res = await post('/usuarios/bulk-estado', {
+        rol: bulkModal.rol,
+        activo: bulkModal.activo
+      });
+      toast.success(res.data?.message || 'Actualización masiva completada');
+      setBulkModal({ open: false, rol: '', activo: true, title: '', message: '' });
+      fetchUsuarios();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Error en la actualización masiva');
+    } finally {
+      setLoadingBulk(false);
+    }
+  };
+
+  // Manejador de Eliminación Individual
+  const handleOpenDeleteModal = (usuario) => {
+    setDeleteModal({ open: true, usuario });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteModal.usuario) return;
+    setDeleting(true);
+    try {
+      const res = await del(`/usuarios/${deleteModal.usuario.id}`);
+      toast.success(res.data?.message || 'Usuario eliminado');
+      setDeleteModal({ open: false, usuario: null });
+      fetchUsuarios();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'No se pudo eliminar el usuario');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const rolOptions = [
     { label: 'Todos los roles', value: '' },
     { label: 'Personero', value: 'personero' },
@@ -160,7 +218,8 @@ const UsuariosPage = () => {
       </div>
 
       <Card>
-        <div className="flex flex-col sm:flex-row gap-4 mb-6">
+        {/* Barra de Filtros y Búsqueda */}
+        <div className="flex flex-col sm:flex-row gap-4 mb-5">
           <div className="flex-1">
             <SearchInput
               onSearch={setSearchTerm}
@@ -171,12 +230,70 @@ const UsuariosPage = () => {
             <select
               value={selectedRol}
               onChange={(e) => setSelectedRol(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white font-medium"
             >
               {rolOptions.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
+          </div>
+        </div>
+
+        {/* Barra de Control Masivo de Acceso */}
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5 mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={18} className="text-red-600" />
+            <span className="text-xs font-bold text-gray-800 uppercase tracking-wide">
+              Control Masivo de Acceso:
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Personeros */}
+            <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-gray-200 shadow-2xs">
+              <span className="text-xs font-bold text-blue-950 mr-1">Personeros:</span>
+              <button
+                type="button"
+                onClick={() => handleOpenBulkModal('personero', true)}
+                className="px-2.5 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md border border-emerald-200 transition-colors flex items-center gap-1 cursor-pointer"
+                title="Habilitar a todos los personeros de mesa"
+              >
+                <UserCheck size={13} />
+                Habilitar Todos
+              </button>
+              <button
+                type="button"
+                onClick={() => handleOpenBulkModal('personero', false)}
+                className="px-2.5 py-1 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-md border border-red-200 transition-colors flex items-center gap-1 cursor-pointer"
+                title="Deshabilitar a todos los personeros de mesa"
+              >
+                <UserX size={13} />
+                Deshabilitar Todos
+              </button>
+            </div>
+
+            {/* Coordinadores */}
+            <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-gray-200 shadow-2xs">
+              <span className="text-xs font-bold text-purple-950 mr-1">Coordinadores:</span>
+              <button
+                type="button"
+                onClick={() => handleOpenBulkModal('coordinador', true)}
+                className="px-2.5 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md border border-emerald-200 transition-colors flex items-center gap-1 cursor-pointer"
+                title="Habilitar a todos los coordinadores de local"
+              >
+                <UserCheck size={13} />
+                Habilitar Todos
+              </button>
+              <button
+                type="button"
+                onClick={() => handleOpenBulkModal('coordinador', false)}
+                className="px-2.5 py-1 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 rounded-md border border-red-200 transition-colors flex items-center gap-1 cursor-pointer"
+                title="Deshabilitar a todos los coordinadores de local"
+              >
+                <UserX size={13} />
+                Deshabilitar Todos
+              </button>
+            </div>
           </div>
         </div>
         
@@ -209,20 +326,30 @@ const UsuariosPage = () => {
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-3">
                 <button
                   onClick={() => handleOpenEdit(u)}
-                  className="text-gray-600 hover:text-red-700 inline-flex items-center transition-colors"
+                  className="text-gray-600 hover:text-red-700 inline-flex items-center transition-colors cursor-pointer"
                 >
                   <Edit2 size={15} className="mr-1" />
                   Editar
                 </button>
                 <button
                   onClick={() => handleToggleActive(u.id, u.activo, u.nombres)}
-                  className={`inline-flex items-center transition-colors ${
+                  className={`inline-flex items-center transition-colors cursor-pointer ${
                     u.activo ? 'text-amber-600 hover:text-amber-800' : 'text-green-600 hover:text-green-800'
                   }`}
                 >
                   {u.activo ? <UserX size={15} className="mr-1" /> : <UserCheck size={15} className="mr-1" />}
                   {u.activo ? 'Desactivar' : 'Activar'}
                 </button>
+                {u.dni !== '00000000' && (
+                  <button
+                    onClick={() => handleOpenDeleteModal(u)}
+                    className="text-red-600 hover:text-red-800 inline-flex items-center transition-colors font-semibold cursor-pointer"
+                    title="Eliminar este usuario del sistema"
+                  >
+                    <Trash2 size={15} className="mr-1" />
+                    Eliminar
+                  </button>
+                )}
               </td>
             </tr>
           ))}
@@ -310,6 +437,85 @@ const UsuariosPage = () => {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal Confirmación de Acción Masiva */}
+      <Modal
+        isOpen={bulkModal.open}
+        onClose={() => setBulkModal({ open: false, rol: '', activo: true, title: '', message: '' })}
+        title={bulkModal.title}
+      >
+        <div className="space-y-4">
+          <div className={`p-4 rounded-xl border flex items-start gap-3 ${
+            bulkModal.activo 
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+              : 'bg-red-50 border-red-200 text-red-900'
+          }`}>
+            <AlertTriangle className="flex-shrink-0 mt-0.5" size={20} />
+            <div>
+              <h4 className="font-bold text-sm">Confirmación Requerida</h4>
+              <p className="text-xs mt-1 leading-relaxed">{bulkModal.message}</p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-3">
+            <Button
+              variant="secondary"
+              onClick={() => setBulkModal({ open: false, rol: '', activo: true, title: '', message: '' })}
+              disabled={loadingBulk}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant={bulkModal.activo ? 'primary' : 'danger'}
+              onClick={handleConfirmBulk}
+              isLoading={loadingBulk}
+              className={bulkModal.activo ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}
+            >
+              {bulkModal.activo ? 'Sí, Habilitar a Todos' : 'Sí, Deshabilitar a Todos'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal Confirmación de Eliminación Individual */}
+      <Modal
+        isOpen={deleteModal.open}
+        onClose={() => setDeleteModal({ open: false, usuario: null })}
+        title="Eliminar Usuario"
+      >
+        <div className="space-y-4">
+          <div className="p-4 rounded-xl border bg-red-50 border-red-200 text-red-900 flex items-start gap-3">
+            <AlertTriangle className="flex-shrink-0 mt-0.5 text-red-600" size={22} />
+            <div>
+              <h4 className="font-bold text-sm">¿Eliminar permanentemente este usuario?</h4>
+              <p className="text-xs mt-1 text-red-800 leading-relaxed">
+                Estás a punto de eliminar al usuario <strong>{deleteModal.usuario?.nombres} {deleteModal.usuario?.apellidos}</strong> (DNI: <span className="font-mono font-bold">{deleteModal.usuario?.dni}</span>, Rol: {deleteModal.usuario?.rol}).
+              </p>
+              <p className="text-[11px] text-red-700 mt-1.5 font-medium">
+                Esta acción removerá sus asignaciones de mesas o locales. Si el usuario ya tiene actas de votación registradas, el sistema impedirá el borrado para salvaguardar la auditoría electoral.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-3">
+            <Button
+              variant="secondary"
+              onClick={() => setDeleteModal({ open: false, usuario: null })}
+              disabled={deleting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              onClick={handleConfirmDelete}
+              isLoading={deleting}
+              className="bg-red-600 hover:bg-red-700 text-white font-bold"
+            >
+              Eliminar Usuario
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

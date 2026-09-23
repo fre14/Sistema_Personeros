@@ -158,6 +158,21 @@ describe('Descarga Controller — Pruebas Unitarias', () => {
         expect.objectContaining({ name: 'distrital/LEEME.txt' })
       );
     });
+
+    it('filtra por distrito_id cuando se proporciona en req.query', async () => {
+      mockDb.queue('distritos', { id: 16, nombre: 'Andres Avelino Caceres' });
+      mockDb.queue('resultados_mesa', []);
+
+      const req = crearReq({ user: usuarioAdmin(), query: { distrito_id: '16' } });
+      const res = crearRes();
+
+      await descargarDistrital(req, res);
+
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'Content-Disposition',
+        expect.stringMatching(/actas_distritales_Andres_Avelino_Caceres_.*\.zip/)
+      );
+    });
   });
 
   describe('descargarCompleta', () => {

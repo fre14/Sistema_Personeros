@@ -202,17 +202,38 @@ const ResultadosAdminPage = () => {
     return distritos;
   }, [distritos, tipoEleccion]);
 
-  const descargarZip = async (tipo) => {
+  const activeDistritoId = filtroDistrito || (vistaModo === 'mesas' ? selectedDistrito : '');
+  const activeDistritoObj = useMemo(() => {
+    if (!activeDistritoId) return null;
+    return distritos.find(d => String(d.id) === String(activeDistritoId)) || null;
+  }, [activeDistritoId, distritos]);
+  const activeDistritoNombre = activeDistritoObj ? activeDistritoObj.nombre : '';
+
+  const descargarZip = async (tipo, customDistritoId = null, customDistritoNombre = null) => {
     setDescargando(true);
-    const etiqueta = tipo === 'provincial' ? 'Provinciales' : tipo === 'distrital' ? 'Distritales' : 'Completas';
+    let etiqueta = tipo === 'provincial' ? 'Provinciales' : tipo === 'distrital' ? 'Distritales' : 'Completas';
+    let urlEndpoint = `/descargas/${tipo}`;
+    const timestamp = new Date().toISOString().slice(0, 10);
+    let filename = `actas_${tipo}_${timestamp}.zip`;
+
+    const targetDistritoId = customDistritoId || activeDistritoId;
+    if (tipo === 'distrital' && targetDistritoId) {
+      const dist = distritos.find(d => String(d.id) === String(targetDistritoId));
+      const distNom = customDistritoNombre || (dist ? dist.nombre : `distrito_${targetDistritoId}`);
+      const slug = distNom.toLowerCase().replace(/[^a-z0-9]/g, '_');
+      urlEndpoint += `?distrito_id=${targetDistritoId}`;
+      etiqueta = `Distritales (${distNom})`;
+      filename = `actas_distritales_${slug}_${timestamp}.zip`;
+    }
+
     const toastId = toast.loading(`Generando archivo ZIP de actas ${etiqueta}...`);
     try {
-      const res = await api.get(`/descargas/${tipo}`, { responseType: 'blob' });
+      const res = await api.get(urlEndpoint, { responseType: 'blob' });
       const blob = new Blob([res.data], { type: 'application/zip' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `actas_${tipo}_${new Date().toISOString().slice(0, 10)}.zip`);
+      link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();
       link.parentNode.removeChild(link);
@@ -460,11 +481,11 @@ const ResultadosAdminPage = () => {
             <button
               onClick={() => descargarZip('distrital')}
               disabled={descargando}
-              className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-white hover:bg-gray-100 text-purple-800 border border-gray-200 shadow-xs flex items-center gap-1 transition-colors"
-              title="Descargar actas distritales verificadas en carpetas por distrito/local/mesa"
+              className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-white hover:bg-gray-100 text-purple-800 border border-gray-200 shadow-xs flex items-center gap-1 transition-colors cursor-pointer"
+              title={activeDistritoNombre ? `Descargar solo actas distritales verificadas de ${activeDistritoNombre}` : "Descargar actas distritales verificadas en carpetas por distrito/local/mesa"}
             >
               <Download size={12} className="text-purple-600" />
-              ZIP Dist.
+              {activeDistritoNombre ? `ZIP Dist. (${activeDistritoNombre})` : 'ZIP Distrital'}
             </button>
             <button
               onClick={() => descargarZip('completa')}
@@ -1211,16 +1232,28 @@ const ResultadosAdminPage = () => {
                         <td className="px-4 py-3 text-right font-mono font-extrabold text-gray-900">{(d.votos_contados || 0).toLocaleString()}</td>
                         <td className="px-4 py-3 text-right font-mono font-black text-red-700">{d.porcentaje_avance}%</td>
                         <td className="px-4 py-3 text-center no-export">
-                          <button
-                            onClick={() => {
-                              setFiltroDistrito(String(d.id));
-                              setFiltroLocal('');
-                            }}
-                            className="px-2.5 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-200 flex items-center gap-1 mx-auto"
-                          >
-                            Desglosar Locales
-                            <ChevronRight size={14} />
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => {
+                                setFiltroDistrito(String(d.id));
+                                setFiltroLocal('');
+                              }}
+                              className="px-2.5 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-200 flex items-center gap-1 cursor-pointer"
+                              title={`Desglosar locales del distrito ${d.nombre}`}
+                            >
+                              Desglosar Locales
+                              <ChevronRight size={14} />
+                            </button>
+                            <button
+                              onClick={() => descargarZip('distrital', d.id, d.nombre)}
+                              disabled={descargando}
+                              className="px-2 py-1 text-xs font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors border border-purple-200 flex items-center gap-1 shadow-2xs cursor-pointer"
+                              title={`Descargar ZIP con actas distritales verificadas de ${d.nombre}`}
+                            >
+                              <Download size={12} />
+                              <span>ZIP</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
