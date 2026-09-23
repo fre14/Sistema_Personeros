@@ -133,7 +133,11 @@ export const remove = async (req, res) => {
     await db.transaction(async (trx) => {
       await trx('asignacion_personeros').where({ usuario_id: id }).del();
       await trx('asignacion_coordinadores').where({ usuario_id: id }).del();
-      await trx('historial_asignaciones').where({ usuario_id: id }).del();
+      await trx('historial_asignaciones')
+        .where('usuario_nuevo_id', id)
+        .orWhere('usuario_anterior_id', id)
+        .orWhere('cambiado_por', id)
+        .del();
       await trx('auditoria').where({ usuario_id: id }).update({ usuario_id: null });
       await trx('usuarios').where({ id }).del();
     });
