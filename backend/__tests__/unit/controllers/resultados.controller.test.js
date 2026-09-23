@@ -36,6 +36,7 @@ jest.unstable_mockModule('../../../src/services/cache.service.js', () => ({
 const {
   subirResultado, corregirResultado, verificarResultado, observarResultado,
   getResultadosPorLocal, getResultadoDetalle, getMiMesa, confirmarMesa,
+  eliminarResultado,
 } = await import('../../../src/controllers/resultados.controller.js');
 
 // ── Datos de referencia ────────────────────────────────────────────
@@ -1103,5 +1104,97 @@ describe('confirmarMesa', () => {
 
     expect(res.status).toHaveBeenCalledWith(500);
     consola.mockRestore();
+  });
+
+  describe('eliminarResultado', () => {
+    it('responde 404 si el resultado no existe', async () => {
+      mockDb.queue('resultados_mesa', undefined);
+      const req = crearReq({ user: usuarioAdmin(), params: { id: '99' } });
+      const res = crearRes();
+
+      await eliminarResultado(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.body.message).toContain('no encontrada');
+    });
+
+    it('responde 404 si la mesa asociada no existe', async () => {
+      mockDb.queue('resultados_mesa', { id: 10, mesa_id: 99, tipo_eleccion: 'provincial' });
+      mockDb.queue('mesas_sufragio', undefined);
+      const req = crearReq({ user: usuarioAdmin(), params: { id: '10' } });
+      const res = crearRes();
+
+      await eliminarResultado(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.body.message).toContain('Mesa asociada no encontrada');
+    });
+
+    it('elimina resultado provincial, detalle y restablece mesa a pendiente cuando no hay mas actas', async () => {
+      const resMock = {
+        id: 10,
+        mesa_id: 9,
+        tipo_eleccion: 'provincial',
+        estado: 'verificado',
+        foto_acta_url: 'actas/045821/foto.jpg',
+        personero_id: 5,
+      };
+      mockDb.queue('resultados_mesa', resMock);
+      mockDb.queue('mesas_sufragio', MESA_PENDIENTE);
+      mockDb.queue('detalle_resultados', 1); // delete
+      mockDb.queue('resultados_mesa', 1); // delete
+      mockDb.queue('resultados_mesa', undefined); // otro resultado
+      mockDb.queue('mesas_sufragio', 1); // update
+
+      const req = crearReq({ user: usuarioAdmin(), params: { id: '10' } });
+      const res = crearRes();
+
+      await eliminarResultado(req, res);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('eliminada correctamente');
+      expect(registrarAuditoria).toHaveBeenCalledWith(expect.objectContaining({
+        tabla: 'resultados_mesa', accion: 'DELETE', registroId: 10,
+      }));
+      expect(invalidateDashboard).toHaveBeenCalled();
+      expect(notifyAdmin).toHaveBeenCalledWith('resultado:eliminado', expect.objectContaining({ resultado_id: 10 }));
+      expect(notifyCoordinator).toHaveBeenCalledWith(4, 'resultado:eliminado', expect.any(Object));
+      expect(notifyPersonero).toHaveBeenCalledWith(5, 'resultado:eliminado', expect.any(Object));
+    });
+
+    it('restaura estado previo si existe otro resultado para la misma mesa y tipo de eleccion', async () => {
+      const resMock = {
+        id: 11,
+        mesa_id: 9,
+        tipo_eleccion: 'distrital',
+        estado: 'observado',
+        foto_acta_url: null,
+      };
+      mockDb.queue('resultados_mesa', resMock);
+      mockDb.queue('mesas_sufragio', { id: 9, local_id: 4, numero_mesa: '045821' });
+      mockDb.queue('detalle_resultados', 1);
+      mockDb.queue('resultados_mesa', 1);
+      mockDb.queue('resultados_mesa', { id: 8, estado: 'verificado' }); // otro resultado previo
+      mockDb.queue('mesas_sufragio', 1);
+
+      const req = crearReq({ user: usuarioAdmin(), params: { id: '11' } });
+      const res = crearRes();
+
+      await eliminarResultado(req, res);
+
+      expect(res.body.success).toBe(true);
+    });
+
+    it('responde 500 ante error inesperado', async () => {
+      const consola = silenciarConsola();
+      mockDb.queueError('resultados_mesa', new Error('caida_fatal'));
+      const req = crearReq({ user: usuarioAdmin(), params: { id: '10' } });
+      const res = crearRes();
+
+      await eliminarResultado(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      consola.mockRestore();
+    });
   });
 });

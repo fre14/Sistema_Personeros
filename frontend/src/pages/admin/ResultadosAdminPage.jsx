@@ -12,7 +12,7 @@ import {
   BarChart3, Eye, FileText, CheckCircle2, AlertTriangle, 
   Image as ImageIcon, Filter, X, RefreshCw, PieChart as PieIcon, 
   Layers, ExternalLink, Activity, Download, MapPin, Building2,
-  ChevronRight, TrendingUp, Vote, Award, ShieldCheck, Check, ArrowLeft, Phone
+  ChevronRight, TrendingUp, Vote, Award, ShieldCheck, Check, ArrowLeft, Phone, Trash2
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -81,6 +81,7 @@ const ResultadosAdminPage = () => {
   const [obsModalOpen, setObsModalOpen] = useState(false);
   const [observacionTexto, setObservacionTexto] = useState('');
   const [modalEleccionTipo, setModalEleccionTipo] = useState('provincial');
+  const [deleteActaModalOpen, setDeleteActaModalOpen] = useState(false);
 
   const { socket } = useSocket();
 
@@ -430,6 +431,36 @@ const ResultadosAdminPage = () => {
     } catch (error) {
       console.error('Error al observar:', error);
       toast.error(error.response?.data?.message || 'Error al observar el acta');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const handleAbrirEliminarActa = () => {
+    const resId = selectedResultado?.targetResultadoId || selectedResultado?.resultadoDetalle?.id;
+    if (!resId) {
+      toast.error('No hay acta registrada para eliminar en esta elección');
+      return;
+    }
+    setDeleteActaModalOpen(true);
+  };
+
+  const handleConfirmarEliminarActa = async () => {
+    const resId = selectedResultado?.targetResultadoId || selectedResultado?.resultadoDetalle?.id;
+    if (!resId) return;
+
+    setAuditLoading(true);
+    try {
+      const res = await api.delete(`/resultados/${resId}`);
+      toast.success(res.data?.message || `🗑️ Acta ${modalEleccionTipo} eliminada correctamente`);
+      setDeleteActaModalOpen(false);
+      setModalDetalleOpen(false);
+      setSelectedResultado(null);
+      fetchEstadisticas();
+      fetchMesas();
+    } catch (error) {
+      console.error('Error al eliminar acta:', error);
+      toast.error(error.response?.data?.message || 'Error al eliminar el acta');
     } finally {
       setAuditLoading(false);
     }
@@ -1480,15 +1511,30 @@ const ResultadosAdminPage = () => {
                   )}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <Button
-                    size="sm"
-                    variant={estadoAMostrar === 'pendiente' ? 'secondary' : 'primary'}
-                    onClick={() => handleVerDetalle(row)}
-                    className="flex items-center gap-1.5 text-xs font-bold shadow-xs cursor-pointer"
-                  >
-                    <ShieldCheck size={14} />
-                    <span>Auditar Acta</span>
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant={estadoAMostrar === 'pendiente' ? 'secondary' : 'primary'}
+                      onClick={() => handleVerDetalle(row)}
+                      className="flex items-center gap-1.5 text-xs font-bold shadow-xs cursor-pointer"
+                    >
+                      <ShieldCheck size={14} />
+                      <span>Auditar Acta</span>
+                    </Button>
+                    {estadoAMostrar !== 'pendiente' && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await handleVerDetalle(row);
+                          setDeleteActaModalOpen(true);
+                        }}
+                        className="p-1.5 text-red-600 hover:text-white hover:bg-red-600 rounded-lg border border-red-200 transition-colors cursor-pointer shadow-2xs"
+                        title="Eliminar acta de esta mesa"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             );})}
@@ -1789,6 +1835,17 @@ const ResultadosAdminPage = () => {
                         <AlertTriangle size={15} className="text-red-600" />
                         <span>Observar Acta</span>
                       </button>
+
+                      <button
+                        type="button"
+                        disabled={auditLoading}
+                        onClick={handleAbrirEliminarActa}
+                        className="px-3.5 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                        title="Eliminar permanentemente esta acta y restablecer la mesa a pendiente"
+                      >
+                        <Trash2 size={15} />
+                        <span>Eliminar Acta</span>
+                      </button>
                     </div>
                   </div>
                 ) : (
@@ -1849,6 +1906,52 @@ const ResultadosAdminPage = () => {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal de Confirmación de Eliminación de Acta */}
+      <Modal
+        isOpen={deleteActaModalOpen}
+        onClose={() => setDeleteActaModalOpen(false)}
+        title={`🗑️ Eliminar Acta (${modalEleccionTipo.toUpperCase()}) - Mesa N° ${selectedResultado?.mesa?.numero_mesa || ''}`}
+      >
+        <div className="space-y-4">
+          <div className="p-4 rounded-xl border bg-red-50 border-red-200 text-red-900 flex items-start gap-3">
+            <AlertTriangle className="flex-shrink-0 mt-0.5 text-red-600" size={24} />
+            <div>
+              <h4 className="font-bold text-sm">¿Eliminar permanentemente esta acta electoral?</h4>
+              <p className="text-xs mt-1 text-red-800 leading-relaxed">
+                Estás a punto de eliminar el acta <strong>{modalEleccionTipo.toUpperCase()}</strong> de la Mesa <strong>N° {selectedResultado?.mesa?.numero_mesa}</strong> (Local: {selectedResultado?.mesa?.local_nombre}).
+              </p>
+              <div className="mt-2 text-[11px] text-red-800 bg-red-100/60 p-2.5 rounded-lg border border-red-200 space-y-1">
+                <p className="font-semibold">⚠️ Consecuencias de esta acción:</p>
+                <ul className="list-disc pl-4 space-y-0.5 text-red-700">
+                  <li>Se eliminarán todos los votos de los candidatos escrutados de esta mesa.</li>
+                  <li>Se eliminará la fotografía del acta física registrada.</li>
+                  <li>La mesa volverá inmediatamente a estado <strong>PENDIENTE</strong>.</li>
+                  <li>Los personeros y coordinadores de esta mesa quedarán libres de actas asociadas, <strong>permitiendo su eliminación</strong> si es necesario.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2.5 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setDeleteActaModalOpen(false)}
+              disabled={auditLoading}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              onClick={handleConfirmarEliminarActa}
+              isLoading={auditLoading}
+              className="bg-red-600 hover:bg-red-700 text-white font-bold"
+            >
+              Sí, Eliminar Acta Permanentemente
+            </Button>
+          </div>
+        </div>
       </Modal>
 
     </div>

@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import {
   subirResultado, corregirResultado, verificarResultado, observarResultado,
-  getResultadosPorLocal, getResultadoDetalle, getMiMesa, confirmarMesa
+  getResultadosPorLocal, getResultadoDetalle, getMiMesa, confirmarMesa,
+  eliminarResultado
 } from '../controllers/resultados.controller.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import { authenticateToken, requireRole } from '../middlewares/auth.middleware.js';
@@ -18,6 +19,7 @@ router.put('/:id/corregir', authenticateToken, requireRole('personero'), uploadA
 
 router.put('/:id/verificar', authenticateToken, requireRole('coordinador', 'admin'), verificarResultado);
 router.put('/:id/observar', authenticateToken, requireRole('coordinador', 'admin'), validate(observarResultadoSchema), observarResultado);
+router.delete('/:id', authenticateToken, requireRole('admin'), eliminarResultado);
 
 router.get('/local/:localId', authenticateToken, requireRole('coordinador', 'admin'), getResultadosPorLocal);
 router.get('/:id', authenticateToken, getResultadoDetalle);

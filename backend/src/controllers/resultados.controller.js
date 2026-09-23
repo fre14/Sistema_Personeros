@@ -1,7 +1,7 @@
 import db from '../config/database.js';
 import { registrarAuditoria } from '../services/auditoria.service.js';
 import { notifyCoordinator, notifyAdmin, notifyPersonero } from '../services/websocket.service.js';
-import { uploadActaImage, getActaUrl } from '../services/storage.service.js';
+import { uploadActaImage, getActaUrl, deleteActaImage } from '../services/storage.service.js';
 import { invalidateDashboard } from '../services/cache.service.js';
 
 class ErrorNegocio extends Error {
@@ -598,5 +598,86 @@ export const confirmarMesa = async (req, res) => {
     res.json({ success: true, message: 'Presencia confirmada en su mesa' });
   } catch (error) {
     responderError(res, error, 'Error confirmando presencia');
+  }
+};
+
+export const eliminarResultado = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const resultado = await db('resultados_mesa').where({ id }).first();
+    if (!resultado) throw new ErrorNegocio(404, 'Resultado / acta no encontrada');
+
+    const mesa = await db('mesas_sufragio').where({ id: resultado.mesa_id }).first();
+    if (!mesa) throw new ErrorNegocio(404, 'Mesa asociada no encontrada');
+
+    const tipoEleccion = resultado.tipo_eleccion || 'provincial';
+    const campoEstado = tipoEleccion === 'distrital' ? 'estado_distrital' : 'estado';
+
+    // 1. Eliminar archivo de foto en storage si existe
+    if (resultado.foto_acta_url) {
+      try {
+        await deleteActaImage(resultado.foto_acta_url);
+      } catch (err) {
+        console.error('Error eliminando imagen del acta:', err.message);
+      }
+    }
+
+    // 2. Transacción de eliminación
+    await db.transaction(async (trx) => {
+      await trx('detalle_resultados').where({ resultado_id: id }).del();
+      await trx('resultados_mesa').where({ id }).del();
+
+      // Verificar si existe otro resultado previo para esa mesa y tipo de elección
+      const otroResultado = await trx('resultados_mesa')
+        .where({ mesa_id: resultado.mesa_id, tipo_eleccion: tipoEleccion })
+        .orderBy('subido_en', 'desc')
+        .first();
+
+      const nuevoEstadoMesa = otroResultado ? otroResultado.estado : 'pendiente';
+      const updateMesa = {
+        [campoEstado]: nuevoEstadoMesa,
+        updated_at: trx.fn.now()
+      };
+      await trx('mesas_sufragio').where({ id: mesa.id }).update(updateMesa);
+    });
+
+    // 3. Registrar auditoría oficial
+    await registrarAuditoria({
+      tabla: 'resultados_mesa',
+      registroId: Number(id),
+      accion: 'DELETE',
+      usuarioId: req.user.id,
+      datosAnteriores: resultado,
+      datosNuevos: null,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    // 4. Invalidar caché del dashboard
+    await invalidateDashboard();
+
+    // 5. Notificar por WebSocket a administradores, coordinador y personero
+    const payload = {
+      mesa_id: mesa.id,
+      local_id: mesa.local_id,
+      numero_mesa: mesa.numero_mesa,
+      resultado_id: Number(id),
+      tipo_eleccion: tipoEleccion,
+    };
+    notifyAdmin('resultado:eliminado', payload);
+    if (mesa.local_id) {
+      notifyCoordinator(mesa.local_id, 'resultado:eliminado', payload);
+    }
+    if (resultado.personero_id) {
+      notifyPersonero(resultado.personero_id, 'resultado:eliminado', payload);
+    }
+
+    res.json({
+      success: true,
+      message: `Acta de la mesa N° ${mesa.numero_mesa} (${tipoEleccion}) eliminada correctamente. La mesa ha vuelto a estado PENDIENTE.`,
+    });
+  } catch (error) {
+    responderError(res, error, 'Error eliminando el acta');
   }
 };
