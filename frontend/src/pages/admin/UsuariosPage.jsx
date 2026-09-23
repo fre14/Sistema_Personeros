@@ -42,7 +42,7 @@ const UsuariosPage = () => {
   const fetchUsuarios = async () => {
     setLoading(true);
     try {
-      let url = `/usuarios?limit=100`;
+      let url = `/usuarios?limit=1000&_t=${Date.now()}`;
       if (searchTerm) url += `&q=${encodeURIComponent(searchTerm)}`;
       if (selectedRol) url += `&rol=${selectedRol}`;
 
@@ -129,12 +129,16 @@ const UsuariosPage = () => {
   };
 
   const handleToggleActive = async (id, currentActive, nombre) => {
+    // Actualización optimista inmediata en la UI
+    setUsuarios(prev => prev.map(u => u.id === id ? { ...u, activo: !currentActive } : u));
     try {
-      await patch(`/usuarios/${id}/toggle-active`);
-      toast.success(`Usuario ${currentActive ? 'desactivado' : 'activado'}`);
-      fetchUsuarios();
+      const res = await patch(`/usuarios/${id}/toggle-active`);
+      toast.success(res.data?.message || `Usuario ${currentActive ? 'desactivado' : 'activado'}`);
+      await fetchUsuarios();
     } catch (error) {
-      toast.error('Error al cambiar el estado del usuario');
+      // Revertir si hubo error
+      setUsuarios(prev => prev.map(u => u.id === id ? { ...u, activo: currentActive } : u));
+      toast.error(error.response?.data?.message || 'Error al cambiar el estado del usuario');
     }
   };
 
@@ -153,16 +157,17 @@ const UsuariosPage = () => {
 
   const handleConfirmBulk = async () => {
     setLoadingBulk(true);
+    const { rol, activo } = bulkModal;
+    // Actualización optimista de todos los usuarios con ese rol
+    setUsuarios(prev => prev.map(u => u.rol === rol ? { ...u, activo } : u));
     try {
-      const res = await post('/usuarios/bulk-estado', {
-        rol: bulkModal.rol,
-        activo: bulkModal.activo
-      });
-      toast.success(res.data?.message || 'Actualización masiva completada');
+      const res = await post('/usuarios/bulk-estado', { rol, activo });
+      toast.success(res.data?.message || `Usuarios ${activo ? 'habilitados' : 'deshabilitados'} exitosamente`);
       setBulkModal({ open: false, rol: '', activo: true, title: '', message: '' });
-      fetchUsuarios();
+      await fetchUsuarios();
     } catch (error) {
       toast.error(error.response?.data?.message || 'Error en la actualización masiva');
+      await fetchUsuarios();
     } finally {
       setLoadingBulk(false);
     }
@@ -175,14 +180,18 @@ const UsuariosPage = () => {
 
   const handleConfirmDelete = async () => {
     if (!deleteModal.usuario) return;
+    const targetUser = deleteModal.usuario;
     setDeleting(true);
+    // Eliminación optimista de la tabla
+    setUsuarios(prev => prev.filter(u => u.id !== targetUser.id));
     try {
-      const res = await del(`/usuarios/${deleteModal.usuario.id}`);
-      toast.success(res.data?.message || 'Usuario eliminado');
+      const res = await del(`/usuarios/${targetUser.id}`);
+      toast.success(res.data?.message || `Usuario ${targetUser.nombres} eliminado`);
       setDeleteModal({ open: false, usuario: null });
-      fetchUsuarios();
+      await fetchUsuarios();
     } catch (error) {
       toast.error(error.response?.data?.message || 'No se pudo eliminar el usuario');
+      await fetchUsuarios();
     } finally {
       setDeleting(false);
     }
