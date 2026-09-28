@@ -1,0 +1,34 @@
+# Dependencias
+node_modules/
+.npm
+
+# Variables de entorno (contienen secretos)
+.env
+.env.local
+.env.production
+
+# Tests y cobertura (no van en la imagen de produccion)
+__tests__/
+coverage/
+jest.config.js
+
+# Scripts de desarrollo y prueba
+scripts/generar-datos-prueba.js
+nodemon.json
+
+# Documentacion y dumps SQL
+*.md
+*.sql
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+*.log
+
+# Archivos de IDE
+.vscode/
+.idea/
+
+# Seeds de datos (ya estan copiados por COPY . .)
+# pero los JSON pesados no se necesitan dos veces
+# seeds/mesas_oficiales_huamanga.json se mantiene (necesario para npm run seed)

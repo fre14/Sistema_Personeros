@@ -105,8 +105,14 @@ describe('config/storage.js — seleccion de driver', () => {
     expect(storageConfig.driver).toBe('supabase');
   });
 
-  it('un driver desconocido no activa supabase', async () => {
+  it('activa el driver s3 cuando se configura STORAGE_DRIVER=s3', async () => {
     const { storageConfig } = await importarStorage({ STORAGE_DRIVER: 's3' });
+
+    expect(storageConfig.driver).toBe('s3');
+  });
+
+  it('un driver desconocido no activa supabase ni s3', async () => {
+    const { storageConfig } = await importarStorage({ STORAGE_DRIVER: 'gcs' });
 
     expect(storageConfig.driver).toBe('local');
   });

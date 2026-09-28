@@ -59,6 +59,10 @@ jest.unstable_mockModule('../../../src/config/storage.js', () => ({
   supabase: supabaseFake,
   bucketName: 'actas-electorales',
   storageConfig,
+  s3Client: null,
+  s3Bucket: null,
+  s3Region: null,
+  cloudfrontDomain: null,
 }));
 jest.unstable_mockModule('fs/promises', () => ({
   default: { mkdir: fsMkdir, writeFile: fsWriteFile, unlink: fsUnlink },

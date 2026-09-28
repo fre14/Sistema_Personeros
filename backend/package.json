@@ -13,6 +13,7 @@
     "migrate:rollback": "knex migrate:rollback",
     "seed": "knex seed:run",
     "setup": "npm run migrate && npm run seed",
+    "limpiar": "node scripts/limpiar-datos-prueba.js",
     "verificar": "node scripts/verificar-sistema.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage --forceExit",
     "test:unit": "node --experimental-vm-modules node_modules/jest/bin/jest.js __tests__/unit --forceExit",
@@ -29,6 +30,8 @@
     "carga:estres": "k6 run -e PERFIL=estres __tests__/load/escenario-jornada-completa.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1142.0",
+    "@aws-sdk/s3-request-presigner": "^3.1142.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "@supabase/supabase-js": "^2.39.0",
     "archiver": "^8.0.0",

@@ -27,6 +27,10 @@ jest.unstable_mockModule('../../../src/config/storage.js', () => ({
   get supabase() { return supabaseInstance; },
   bucketName: 'actas',
   storageConfig: { driver: 'supabase', localPath: '/tmp', publicUrl: '/actas' },
+  s3Client: null,
+  s3Bucket: null,
+  s3Region: null,
+  cloudfrontDomain: null,
 }));
 
 jest.unstable_mockModule('socket.io', () => ({
