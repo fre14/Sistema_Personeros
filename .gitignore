@@ -41,3 +41,6 @@ Thumbs.db
 
 # Resultados de pruebas de carga
 resumen-carga.json
+
+# Configuracion local del despliegue en AWS
+aws/config.env

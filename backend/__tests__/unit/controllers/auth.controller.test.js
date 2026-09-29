@@ -333,6 +333,23 @@ describe('Auth Controller', () => {
       expect(res.status).toHaveBeenCalledWith(400);
     });
 
+    it('debe exigir la contraseña actual si el usuario ya tiene una (evita secuestro con token robado)', async () => {
+      const req = mockReq({
+        user: { id: 1 },
+        body: { newPassword: 'newpass123' },
+      });
+      const res = mockRes();
+
+      mockDbChain.first.mockResolvedValueOnce({
+        id: 1, password_hash: await bcrypt.hash('admin123', 12),
+      });
+
+      await authController.changePassword(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(mockDbChain.update).not.toHaveBeenCalled();
+    });
+
     it('debe cambiar contraseña exitosamente', async () => {
       const req = mockReq({
         user: { id: 1 },

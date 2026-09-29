@@ -1,4 +1,32 @@
+// Los 16 distritos de Huamanga (mismos datos que seeds/01_distritos.js).
+// En una base NUEVA (p. ej. RDS recien creada) las migraciones corren antes
+// que los seeds: sin esto la tabla distritos esta vacia, distrito_id queda
+// en NULL y la restriccion chk_candidato_distrital hace fallar la migracion.
+const DISTRITOS_HUAMANGA = [
+  { nombre: 'Ayacucho', codigo: 'AYA' },
+  { nombre: 'Acocro', codigo: 'ACO' },
+  { nombre: 'Acos Vinchos', codigo: 'ACV' },
+  { nombre: 'Carmen Alto', codigo: 'CAL' },
+  { nombre: 'Chiara', codigo: 'CHI' },
+  { nombre: 'Jesús Nazareno', codigo: 'JNA' },
+  { nombre: 'Ocros', codigo: 'OCR' },
+  { nombre: 'Pacaycasa', codigo: 'PAC' },
+  { nombre: 'Quinua', codigo: 'QUI' },
+  { nombre: 'San José de Ticllas', codigo: 'SJT' },
+  { nombre: 'San Juan Bautista', codigo: 'SJB' },
+  { nombre: 'Santiago de Pischa', codigo: 'SDP' },
+  { nombre: 'Socos', codigo: 'SOC' },
+  { nombre: 'Tambillo', codigo: 'TAM' },
+  { nombre: 'Vinchos', codigo: 'VIN' },
+  { nombre: 'Andrés Avelino Cáceres Dorregaray', codigo: 'AAC' },
+];
+
 export async function up(knex) {
+  await knex('distritos').insert(DISTRITOS_HUAMANGA).onConflict('codigo').ignore();
+  await knex('distritos')
+    .whereIn('codigo', ['SJB', 'AAC', 'CAL', 'JNA', 'TAM'])
+    .update({ tiene_eleccion_distrital: true });
+
   const distritos = await knex('distritos')
     .whereIn('codigo', ['SJB', 'AAC', 'CAL', 'JNA', 'TAM'])
     .select('id', 'codigo', 'nombre');
@@ -50,7 +78,7 @@ export async function up(knex) {
     { distrito: 'TAM', numero_lista: 5, nombre_completo: 'Walter Arce Prado', organizacion_politica: 'APP/Trabaja Ayacucho', siglas: 'APP' },
   ];
 
-  const inserts = candidatosDistritales.map(c => ({
+  const inserts = candidatosDistritales.filter(c => distritoMap[c.distrito]).map(c => ({
     nombre_completo: c.nombre_completo,
     organizacion_politica: c.organizacion_politica,
     siglas: c.siglas,
@@ -60,7 +88,7 @@ export async function up(knex) {
     activo: true,
   }));
 
-  await knex('candidatos').insert(inserts);
+  if (inserts.length) await knex('candidatos').insert(inserts);
 }
 
 export async function down(knex) {

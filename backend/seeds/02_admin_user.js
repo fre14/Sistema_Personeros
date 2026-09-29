@@ -5,9 +5,15 @@ import bcrypt from 'bcryptjs';
  * @returns { Promise<void> } 
  */
 export const seed = async function(knex) {
-  const hashGabriela = await bcrypt.hash('123456', 12);
-  const hashFredy = await bcrypt.hash('15143104', 12);
-  const hashSuperAdmin = await bcrypt.hash('admin123', 12);
+  // Las claves locales de ejemplo estan publicadas en el repositorio. En AWS
+  // (sistema expuesto a internet) todas las cuentas admin reciben la clave
+  // generada al desplegar via SEED_ADMINS_PASSWORD; cada admin la cambia luego.
+  const claveAdmins = process.env.SEED_ADMINS_PASSWORD;
+  const hashGabriela = await bcrypt.hash(claveAdmins || '123456', 12);
+  const hashFredy = await bcrypt.hash(claveAdmins || '15143104', 12);
+  // En AWS la clave del superadministrador (DNI 00000000) se genera al
+  // desplegar y llega por SEED_SUPERADMIN_PASSWORD. 'admin123' solo en local.
+  const hashSuperAdmin = await bcrypt.hash(process.env.SEED_SUPERADMIN_PASSWORD || 'admin123', 12);
   
   await knex('usuarios')
     .insert([
@@ -37,5 +43,7 @@ export const seed = async function(knex) {
       }
     ])
     .onConflict('dni')
-    .merge();
+    // No se pisa password_hash: volver a correr los seeds ya no resetea las
+    // claves que los administradores cambiaron.
+    .merge(['nombres', 'apellidos', 'rol', 'activo']);
 };

@@ -330,7 +330,7 @@ describe('Autenticacion y autorizacion en las rutas', () => {
 
     const res = await request(app).get('/api/usuarios').set(...auth(falso));
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   it('rechaza un token expirado', async () => {
@@ -338,7 +338,7 @@ describe('Autenticacion y autorizacion en las rutas', () => {
 
     const res = await request(app).get('/api/usuarios').set(...auth(expirado));
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   it('un token con rol manipulado en el payload pero mal firmado no sirve', async () => {
@@ -349,7 +349,7 @@ describe('Autenticacion y autorizacion en las rutas', () => {
 
     const res = await request(app).get('/api/usuarios').set(...auth(manipulado));
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   describe('separacion de privilegios por rol', () => {

@@ -160,8 +160,25 @@ app.use(errorHandler);
 
 const PORT = Number(process.env.PORT || 3000);
 
+const SECRETOS_POR_DEFECTO = new Set(['', 'secret', 'refresh', 'refresh_secret', 'CAMBIAR_POR_CADENA_ALEATORIA_LARGA']);
+
 const arrancar = async () => {
-  await initRedis();
+  if (process.env.NODE_ENV === 'production') {
+    const inseguros = ['JWT_SECRET', 'JWT_REFRESH_SECRET']
+      .filter((k) => SECRETOS_POR_DEFECTO.has(String(process.env[k] || '')));
+    if (inseguros.length) {
+      console.error(`FATAL: ${inseguros.join(', ')} sin definir o con valor de ejemplo. No se arranca en produccion.`);
+      process.exit(1);
+    }
+  }
+
+  const redis = await initRedis();
+  // En AWS (varias instancias) Redis es obligatorio: sin el, Socket.io no
+  // sincroniza entre servidores. Se sale para que systemd reintente.
+  if (!redis && String(process.env.REDIS_REQUIRED || '').toLowerCase() === 'true') {
+    console.error('FATAL: REDIS_REQUIRED=true y Redis no responde. Se reintentara el arranque.');
+    process.exit(1);
+  }
   await setupWebSocket(httpServer, allowedOrigins);
 
   httpServer.keepAliveTimeout = 65000;

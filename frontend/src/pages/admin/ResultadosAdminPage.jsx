@@ -233,7 +233,9 @@ const ResultadosAdminPage = () => {
 
     const toastId = toast.loading(`Generando archivo ZIP de actas ${etiqueta}...`);
     try {
-      const res = await api.get(urlEndpoint, { responseType: 'blob' });
+      // Sin tiempo limite: el ZIP con cientos de fotos tarda mas que los 30 s
+      // por defecto del cliente y la descarga se cortaba.
+      const res = await api.get(urlEndpoint, { responseType: 'blob', timeout: 0 });
       const blob = new Blob([res.data], { type: 'application/zip' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');

@@ -94,5 +94,25 @@ export const seed = async function(knex) {
     .whereNotIn('id', activeLocalIds)
     .update({ total_mesas: 0, updated_at: knex.fn.now() });
 
+  // Mesas de distritos con eleccion distrital: su acta distrital arranca en
+  // 'pendiente'. En una base nueva la migracion de soporte distrital corrio
+  // antes de que existieran las mesas, asi que se completa aqui.
+  const hayDistrital = await knex.schema.hasColumn('distritos', 'tiene_eleccion_distrital');
+  const distritosDistritales = hayDistrital
+    ? await knex('distritos').where({ tiene_eleccion_distrital: true }).pluck('id')
+    : [];
+  if (distritosDistritales.length) {
+    await knex('mesas_sufragio')
+      .whereNull('estado_distrital')
+      .whereIn('local_id', knex('locales_votacion').select('id').whereIn('distrito_id', distritosDistritales))
+      .update({ estado_distrital: 'pendiente' });
+  }
+
+  // Los locales se insertan con id explicito, asi que la secuencia se quedaba
+  // en 1 y crear un local nuevo desde el panel fallaba con "duplicate key".
+  await knex.raw(
+    "SELECT setval(pg_get_serial_sequence('locales_votacion', 'id'), (SELECT COALESCE(MAX(id), 1) FROM locales_votacion))"
+  );
+
   console.log(`✅ Seed oficial ONPE completado: ${localesData.length} locales y 783 mesas sincronizadas.`);
 };

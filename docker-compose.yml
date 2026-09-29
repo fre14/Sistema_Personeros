@@ -1,8 +1,8 @@
 # ===========================================================================
 # Sistema Electoral - Entorno de DESARROLLO LOCAL y pruebas integradas
 #
-# Para producción en AWS (ECS Fargate + ALB + RDS + ElastiCache + S3):
-# Consulte: docs/GUIA_DESPLIEGUE_AWS.md
+# Para producción en AWS (CloudFront + ALB + EC2 autoescalado + RDS +
+# ElastiCache + S3): bash aws/desplegar.sh  (ver docs/GUIA_DESPLIEGUE_AWS.md)
 #
 # Arquitectura local: Nginx (balanceador) -> 4 backends Node -> PgBouncer ->
 #                     PostgreSQL 16, con Redis para cache y WebSockets.

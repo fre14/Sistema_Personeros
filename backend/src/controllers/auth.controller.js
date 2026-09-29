@@ -1,6 +1,7 @@
 import db from '../config/database.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { authConfig } from '../config/auth.js';
 
 export const login = async (req, res) => {
   try {
@@ -40,8 +41,9 @@ export const login = async (req, res) => {
     }
 
     const payload = { id: user.id, dni: user.dni, rol: user.rol };
-    const accessToken = jwt.sign(payload, process.env.JWT_SECRET || 'secret', { expiresIn: '15m' });
-    const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET || 'refresh', { expiresIn: '7d' });
+    // Antes la duracion estaba fija en 15m e ignoraba JWT_EXPIRES_IN del .env.
+    const accessToken = jwt.sign(payload, authConfig.secret, { expiresIn: authConfig.expiresIn });
+    const refreshToken = jwt.sign(payload, authConfig.refreshSecret, { expiresIn: authConfig.refreshExpiresIn });
 
     res.json({
       success: true,
@@ -62,9 +64,9 @@ export const refreshToken = async (req, res) => {
     const { token } = req.body;
     if (!token) return res.status(401).json({ success: false, message: 'Token requerido' });
 
-    const payload = jwt.verify(token, process.env.JWT_REFRESH_SECRET || 'refresh');
+    const payload = jwt.verify(token, authConfig.refreshSecret);
     const newPayload = { id: payload.id, dni: payload.dni, rol: payload.rol };
-    const newAccessToken = jwt.sign(newPayload, process.env.JWT_SECRET || 'secret', { expiresIn: '15m' });
+    const newAccessToken = jwt.sign(newPayload, authConfig.secret, { expiresIn: authConfig.expiresIn });
 
     res.json({ success: true, data: { accessToken: newAccessToken }, message: 'Token renovado' });
   } catch (error) {
@@ -98,8 +100,10 @@ export const changePassword = async (req, res) => {
     const user = await db('usuarios').where({ id: req.user.id }).first();
     if (!user) return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
 
-    if (user.password_hash && currentPassword) {
-      const isValid = await bcrypt.compare(currentPassword, user.password_hash);
+    // Antes, si no se enviaba currentPassword la verificacion se saltaba y un
+    // token robado bastaba para cambiar la clave. Ahora es obligatoria.
+    if (user.password_hash) {
+      const isValid = Boolean(currentPassword) && await bcrypt.compare(currentPassword, user.password_hash);
       if (!isValid) {
         return res.status(400).json({ 
           success: false, 

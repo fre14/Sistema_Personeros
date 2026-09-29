@@ -10,11 +10,16 @@ Sistema web para la gestión de personeros electorales, coordinadores de local y
 
 ### Opción 1: Producción en AWS Cloud (Oficial)
 
-El sistema está presupuestado y optimizado para desplegarse en **Amazon Web Services (AWS)** bajo demanda para la jornada electoral (77 horas de servicio distribuidas en 4 fases, con un costo total estimado de **\$117.64 USD**):
+Un solo comando desde **AWS CloudShell** crea toda la infraestructura (CloudFront,
+balanceador, servidores EC2 con autoescalado, PostgreSQL Multi-AZ, Redis y S3),
+publica el sistema y lo verifica de punta a punta:
 
-- Guía oficial paso a paso: **[docs/GUIA_DESPLIEGUE_AWS.md](docs/GUIA_DESPLIEGUE_AWS.md)**
-- Documentación técnica y arquitectura de AWS: **[docs/aws/](docs/aws/)**
-- Resumen ejecutivo y presupuesto: **[docs/aws/RESUMEN_EJECUTIVO.md](docs/aws/RESUMEN_EJECUTIVO.md)**
+```bash
+bash aws/desplegar.sh
+```
+
+- Guía paso a paso: **[docs/GUIA_DESPLIEGUE_AWS.md](docs/GUIA_DESPLIEGUE_AWS.md)**
+- Infraestructura como código: **[aws/plantilla-electoral.yaml](aws/plantilla-electoral.yaml)**
 
 ### Opción 2: Desarrollo Local
 
@@ -46,48 +51,27 @@ Si se requiere desplegar en un único servidor VPS en lugar de AWS:
 ## Arquitectura de Producción (AWS)
 
 ```
-                   [ Usuarios / Personeros ]
-                              │
-                    (HTTPS / Puerto 443)
-                              ▼
-                   [ Amazon CloudFront (CDN) ]
-                   - Distribución global estáticos SPA
-                   - SSL/TLS vía ACM (Certificado gratis)
-                   - Aceleración de carga y caché perimetral
-                              │
-                              ▼
-            [ Application Load Balancer (ALB) ]
-            - Multi-AZ (us-east-1a, us-east-1b)
-            - Terminación SSL y Health Checks automáticos
-            - Sticky sessions para WebSockets (Socket.io)
-                              │
-            ┌─────────────────┴─────────────────┐
-            ▼                                   ▼
-    [ ECS Fargate Tarea 1..6 ]          [ ECS Fargate Tarea 1..6 ]
-    - Node.js 20 (Express)              - Node.js 20 (Express)
-    - Socket.io con Redis Adapter       - Socket.io con Redis Adapter
-    - Subida streaming de actas         - Subida streaming de actas
-            │                                   │
-            ├─────────────────┬─────────────────┤
-            ▼                 ▼                 ▼
-   [ Amazon RDS Proxy ]  [ ElastiCache Redis ]  [ Amazon S3 ]
-   - Pool de conexiones  - Redis 7 en memoria   - Bucket de actas
-   - Evita saturación    - Caché dashboard (5s) - URLs seguras
-            │            - Pub/Sub WebSockets   - Backup permanente
-            ▼
-   [ RDS PostgreSQL 16 ]
-   - Multi-AZ (Alta disp.)
-   - Padrón 783 mesas
+Personeros (celular) ──HTTPS──► CloudFront ─┬─► S3 (frontend React)
+                                            └─► /api y /socket.io
+                                                    ▼
+                                      Balanceador ALB (2 zonas)
+                                        │                 │
+                              EC2 Node.js 22 ... EC2 Node.js 22   ← autoescalado 2 a 8
+                                        │                 │
+               ┌────────────────────────┼─────────────────┤
+               ▼                        ▼                 ▼
+    RDS PostgreSQL 16          ElastiCache Redis 7     S3 actas
+    Multi-AZ                   TLS, pub/sub Socket.io  privado, versionado
 ```
 
-| Capa | Tecnología AWS / Producción | Alternativa Local |
+| Capa | Producción en AWS | Alternativa Local |
 |---|---|---|
-| **Frontend** | React 18 + Vite + Tailwind en S3 + CloudFront | Servidor Vite local |
-| **Backend** | ECS Fargate (2 a 6 tareas autoescalables, Node.js 20) | Node.js local / Docker Compose |
-| **Balanceador** | Application Load Balancer (ALB) Multi-AZ | Nginx con `ip_hash` |
-| **Base de datos** | Amazon RDS PostgreSQL 16 Multi-AZ + RDS Proxy | PostgreSQL 16 local + PgBouncer |
-| **Caché y WebSockets** | Amazon ElastiCache Redis 7 | Redis 7 Alpine |
-| **Almacenamiento Actas** | Amazon S3 con URLs firmadas y CloudFront | Disco local (`/app/uploads`) |
+| **Frontend** | React 18 + Vite en S3 + CloudFront (HTTPS) | Servidor Vite local |
+| **Backend** | EC2 con Auto Scaling (2 a 8 servidores, Node.js 22) | Node.js local / Docker Compose |
+| **Balanceador** | Application Load Balancer Multi-AZ, afinidad para Socket.io | Nginx con `ip_hash` |
+| **Base de datos** | Amazon RDS PostgreSQL 16 Multi-AZ | PostgreSQL 16 local + PgBouncer |
+| **Caché y WebSockets** | Amazon ElastiCache Redis 7 (TLS) | Redis 7 Alpine |
+| **Almacenamiento Actas** | Amazon S3 con URLs firmadas | Disco local (`/app/uploads`) |
 
 ---
 
@@ -133,6 +117,7 @@ Compatible de forma nativa con **Visual Studio Code**: incluye `.vscode/settings
 ## Estructura del Repositorio
 
 ```
+├── aws/                        # Despliegue en AWS (plantilla + scripts de CloudShell)
 ├── backend/
 │   ├── src/
 │   │   ├── app.js              # Arranque Express, middlewares y graceful shutdown
@@ -159,6 +144,5 @@ Compatible de forma nativa con **Visual Studio Code**: incluye `.vscode/settings
     ├── INFORME_PRUEBAS.md              # Informe de calidad y pruebas de carga
     ├── CONTEXTO_SISTEMA_PERSONEROS.md  # Contexto electoral y reglas de negocio
     ├── CAMBIOS_REALIZADOS.md           # Registro histórico de cambios v2.0
-    ├── aws/                            # Documentación de arquitectura AWS
-    └── legacy/                         # Documentación de despliegue en VPS
+    └── legacy/                         # VPS y propuesta anterior con Fargate
 ```

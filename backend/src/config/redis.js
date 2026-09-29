@@ -10,10 +10,14 @@ const buildUrl = () => {
   const host = process.env.REDIS_HOST || '127.0.0.1';
   const port = process.env.REDIS_PORT || 6379;
   const pass = process.env.REDIS_PASSWORD;
+  // ElastiCache con cifrado en transito exige TLS (rediss://).
+  const esquema = String(process.env.REDIS_TLS || '').toLowerCase() === 'true' ? 'rediss' : 'redis';
   return pass
-    ? `redis://:${encodeURIComponent(pass)}@${host}:${port}`
-    : `redis://${host}:${port}`;
+    ? `${esquema}://:${encodeURIComponent(pass)}@${host}:${port}`
+    : `${esquema}://${host}:${port}`;
 };
+
+const INIT_TIMEOUT_MS = Number(process.env.REDIS_INIT_TIMEOUT_MS || 2000);
 
 export const initRedis = async () => {
   if (!REDIS_ENABLED) {
@@ -42,7 +46,7 @@ export const initRedis = async () => {
 
   try {
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Tiempo de espera agotado (2s)')), 2000)
+      setTimeout(() => reject(new Error(`Tiempo de espera agotado (${INIT_TIMEOUT_MS} ms)`)), INIT_TIMEOUT_MS)
     );
     await Promise.race([client.connect(), timeoutPromise]);
   } catch (err) {

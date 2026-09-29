@@ -403,7 +403,7 @@ describe('auth.middleware — authenticateToken', () => {
     expect(res.status).toHaveBeenCalledWith(401);
   });
 
-  it('rechaza con 403 si el token es invalido o expiro', () => {
+  it('rechaza con 401 si el token es invalido o expiro (el frontend lo renueva)', () => {
     jwtVerify.mockImplementation(() => { throw new Error('jwt expired'); });
     const res = crearRes();
 
@@ -411,7 +411,7 @@ describe('auth.middleware — authenticateToken', () => {
       crearReq({ headers: { authorization: 'Bearer caducado' } }), res, jest.fn(),
     );
 
-    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.status).toHaveBeenCalledWith(401);
     expect(res.body.message).toMatch(/invalid token/i);
   });
 

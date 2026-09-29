@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
+import api from '../services/api';
 
 /**
  * Conexion en tiempo real.
@@ -29,7 +30,9 @@ export const SocketProvider = ({ children }) => {
 
     const url = import.meta.env.VITE_WS_URL || window.location.origin;
     const socket = io(url, {
-      auth: { token },
+      // Funcion y no objeto: en cada reconexion se lee el token vigente. Antes
+      // se reutilizaba el del login y, al vencer, el socket no volvia a entrar.
+      auth: (cb) => cb({ token: localStorage.getItem('token') || token }),
       path: '/socket.io',
       transports: ['websocket', 'polling'],
       reconnection: true,
@@ -39,13 +42,41 @@ export const SocketProvider = ({ children }) => {
       timeout: 20000,
     });
 
-    socket.on('connect', () => setConnected(true));
+    let intentosAuth = 0;
+    let renovando = false;
+    let temporizador = null;
+
+    socket.on('connect', () => {
+      intentosAuth = 0;
+      setConnected(true);
+    });
     socket.on('disconnect', () => setConnected(false));
-    socket.on('connect_error', () => setConnected(false));
+    socket.on('connect_error', async () => {
+      setConnected(false);
+      // Si el servidor rechazo el token (socket.active=false), el cliente ya no
+      // reintenta solo. Se fuerza la renovacion del token (el interceptor de
+      // api.js lo hace ante un 401) y se reconecta con espera creciente.
+      if (socket.active || renovando) return;
+      renovando = true;
+      try {
+        await api.get('/auth/profile');
+      } catch {
+        // Si no se pudo renovar, api.js ya envia al usuario al login.
+      } finally {
+        renovando = false;
+      }
+      const espera = Math.min(30000, 1000 * 2 ** intentosAuth);
+      intentosAuth += 1;
+      clearTimeout(temporizador);
+      temporizador = setTimeout(() => {
+        if (!socket.connected && localStorage.getItem('token')) socket.connect();
+      }, espera);
+    });
 
     socketRef.current = socket;
 
     return () => {
+      clearTimeout(temporizador);
       socket.removeAllListeners();
       socket.disconnect();
       socketRef.current = null;

@@ -36,6 +36,10 @@ export const setupWebSocket = async (server, allowedOrigins = []) => {
     try {
       const pubClient = redis.duplicate();
       const subClient = redis.duplicate();
+      // Sin estos manejadores, un corte breve de Redis (p. ej. la conmutacion
+      // Multi-AZ de ElastiCache) emite 'error' sin escucha y tumba el proceso.
+      pubClient.on('error', (err) => console.error('Redis pub (Socket.io):', err.message));
+      subClient.on('error', (err) => console.error('Redis sub (Socket.io):', err.message));
       await pubClient.connect();
       await subClient.connect();
       io.adapter(createAdapter(pubClient, subClient));

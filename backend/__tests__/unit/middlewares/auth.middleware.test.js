@@ -34,21 +34,21 @@ describe('Auth Middleware', () => {
       expect(next).not.toHaveBeenCalled();
     });
 
-    it('debería devolver 403 con Invalid token si el token es malformado', () => {
+    it('debería devolver 401 con Invalid token si el token es malformado', () => {
       req.headers.authorization = 'Bearer token.invalido.123';
       authenticateToken(req, res, next);
-      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.status).toHaveBeenCalledWith(401);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({ success: false, message: expect.stringMatching(/Invalid token/i) })
       );
       expect(next).not.toHaveBeenCalled();
     });
 
-    it('debería devolver 403 si el token ha expirado', () => {
+    it('debería devolver 401 si el token ha expirado (para que el frontend lo renueve)', () => {
       const expiredToken = jwt.sign({ id: 1 }, process.env.JWT_SECRET || 'secret', { expiresIn: '-1h' });
       req.headers.authorization = `Bearer ${expiredToken}`;
       authenticateToken(req, res, next);
-      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.status).toHaveBeenCalledWith(401);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({ success: false, message: expect.stringMatching(/Invalid token/i) })
       );
@@ -64,11 +64,11 @@ describe('Auth Middleware', () => {
       expect(next).toHaveBeenCalled();
     });
 
-    it('debería devolver 403 si se firma con un secret distinto', () => {
+    it('debería devolver 401 si se firma con un secret distinto', () => {
       const badToken = jwt.sign({ id: 1 }, 'wrong-secret-key-12345');
       req.headers.authorization = `Bearer ${badToken}`;
       authenticateToken(req, res, next);
-      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.status).toHaveBeenCalledWith(401);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({ success: false, message: expect.stringMatching(/Invalid token/i) })
       );

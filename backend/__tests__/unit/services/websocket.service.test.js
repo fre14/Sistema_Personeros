@@ -34,6 +34,7 @@ const createAdapter = jest.fn(() => ({ __adapter: true }));
 let redisDisponible = true;
 let duplicarFalla = false;
 const clienteDuplicado = () => ({
+  on: jest.fn(function () { return this; }),
   connect: jest.fn(async () => {
     if (duplicarFalla) throw new Error('ECONNREFUSED');
   }),
@@ -148,6 +149,19 @@ describe('setupWebSocket — adapter Redis (multi-instancia)', () => {
     expect(redisFake.duplicate).toHaveBeenCalledTimes(2);
     expect(createAdapter).toHaveBeenCalled();
     expect(ioFake.adapter).toHaveBeenCalledWith({ __adapter: true });
+  });
+
+  it('registra manejadores de error en pub y sub (un corte de Redis no tumba el proceso)', async () => {
+    await setupWebSocket({}, []);
+
+    const clientes = redisFake.duplicate.mock.results.map((r) => r.value);
+    expect(clientes).toHaveLength(2);
+    clientes.forEach((cliente) => {
+      const registro = cliente.on.mock.calls.find(([evento]) => evento === 'error');
+      expect(registro).toBeDefined();
+      expect(() => registro[1](new Error('conmutacion Multi-AZ'))).not.toThrow();
+    });
+    expect(consola).toHaveBeenCalled();
   });
 
   it('reporta adapterRedis=true en las estadisticas', async () => {

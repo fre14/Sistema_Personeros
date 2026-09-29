@@ -1,0 +1,1090 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Sistema Electoral de Personeros - infraestructura completa: VPC en 2 zonas,
+  CloudFront (HTTPS) + S3 para el frontend, balanceador ALB, servidores EC2 con
+  autoescalado, PostgreSQL 16 (RDS), Redis (ElastiCache) y S3 para las actas.
+  Se despliega con aws/desplegar.sh; no edite los parametros a mano.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Artefactos (los completa desplegar.sh) }
+        Parameters: [ArtifactsBucket, ArtifactKey, NodeTarballKey, OriginVerifySecret, CloudFrontPrefixListId]
+      - Label: { default: Servidores de aplicacion }
+        Parameters: [InstanceType, MinInstances, MaxInstances, PeakInstances, ElectionDaySchedule, AmiId]
+      - Label: { default: Base de datos y cache }
+        Parameters: [DbInstanceClass, DbEngineVersion, DbMultiAZ, RedisNodeType, RedisMultiAZ]
+      - Label: { default: Opcionales }
+        Parameters: [AlertEmail, MonthlyBudgetUsd, CustomDomain, CustomDomainCertArn, JwtExpiresIn]
+
+Parameters:
+  ArtifactsBucket:
+    Type: String
+    Description: Bucket S3 (fuera de la pila) con el paquete de la aplicacion.
+  ArtifactKey:
+    Type: String
+    Description: Clave S3 del paquete app-*.tar.gz (backend + scripts de instancia).
+  NodeTarballKey:
+    Type: String
+    Default: ''
+    Description: Clave S3 del binario oficial de Node.js 22. Vacio = instalar con dnf.
+  OriginVerifySecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Cabecera secreta CloudFront -> ALB. El ALB rechaza todo lo que no la trae.
+  CloudFrontPrefixListId:
+    Type: String
+    AllowedPattern: '^pl-[0-9a-f]+$'
+    Description: Lista de prefijos administrada com.amazonaws.global.cloudfront.origin-facing.
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t3.small, t3.medium, t3.large, c6i.large, c7i.large, m6i.large, m7i.large]
+  MinInstances:
+    Type: Number
+    Default: 2
+    MinValue: 0
+    MaxValue: 12
+    Description: Servidores minimos (2 = uno por zona). 0 solo para pausar.
+  MaxInstances:
+    Type: Number
+    Default: 8
+    MinValue: 1
+    MaxValue: 12
+    Description: Tope del autoescalado. 12 x 25 conexiones = 300 < limite de db.t4g.medium.
+  PeakInstances:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 12
+    Description: Servidores garantizados en los picos del 4 de octubre (instalacion y cierre de mesas).
+  ElectionDaySchedule:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Pre-escalar automaticamente el dia de la eleccion (hora de Lima).
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: >-
+      AMI de Amazon Linux 2023 (x86_64). desplegar.sh la fija al crear y la conserva
+      en las actualizaciones, para que un cambio de parametros no reemplace servidores.
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.medium
+    AllowedValues: [db.t4g.small, db.t4g.medium, db.t4g.large, db.m7g.large, db.r7g.large]
+  DbEngineVersion:
+    Type: String
+    Default: '16'
+    Description: Version de PostgreSQL. desplegar.sh la fija al crear; no cambiarla despues.
+  DbMultiAZ:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+  RedisNodeType:
+    Type: String
+    Default: cache.t4g.small
+    AllowedValues: [cache.t4g.micro, cache.t4g.small, cache.t4g.medium, cache.m7g.large]
+  RedisMultiAZ:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Correo para alarmas y avisos de presupuesto (hay que confirmar la suscripcion).
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 200
+    MinValue: 10
+  CustomDomain:
+    Type: String
+    Default: ''
+    Description: Opcional, p. ej. elecciones.midominio.pe (requiere CustomDomainCertArn).
+  CustomDomainCertArn:
+    Type: String
+    Default: ''
+    Description: Certificado ACM emitido en us-east-1 para CustomDomain.
+  JwtExpiresIn:
+    Type: String
+    Default: 12h
+    Description: Duracion del token de acceso (cubre la jornada completa de un personero).
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref AlertEmail, '']]
+  HasCustomDomain: !And
+    - !Not [!Equals [!Ref CustomDomain, '']]
+    - !Not [!Equals [!Ref CustomDomainCertArn, '']]
+  RedisHA: !Equals [!Ref RedisMultiAZ, 'true']
+  UseSchedule: !Equals [!Ref ElectionDaySchedule, 'true']
+
+Resources:
+  # ───────────────────────────── Red ─────────────────────────────
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.40.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-vpc' }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-igw' }]
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.0.0/20
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-publica-a' }]
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.16.0/20
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-publica-b' }]
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.128.0/20
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-privada-a' }]
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.144.0/20
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-privada-b' }]
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-rutas-publicas' }]
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  # Subredes privadas SIN salida a internet: solo base de datos y Redis.
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-rutas-privadas' }]
+
+  PrivateSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Trafico a S3 (actas, paquetes, repos de Amazon Linux) sin pasar por internet. Gratis.
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PublicRouteTable, !Ref PrivateRouteTable]
+
+  # ──────────────────────── Grupos de seguridad ────────────────────────
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB - solo acepta trafico desde CloudFront
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId: !Ref CloudFrontPrefixListId
+          Description: CloudFront origin-facing
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-alb' }]
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Servidores Node - solo desde el ALB (sin SSH; acceso por Session Manager)
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+          Description: Trafico del balanceador
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-app' }]
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: PostgreSQL - solo desde los servidores de aplicacion
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+          Description: Servidores Node
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-db' }]
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Redis - solo desde los servidores de aplicacion
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+          Description: Servidores Node
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-redis' }]
+
+  # ───────────────────────────── Secretos ─────────────────────────────
+  # Sin rotacion automatica a proposito: una rotacion en plena jornada
+  # dejaria a los servidores con la clave vieja.
+  DbPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: !Sub 'Clave de PostgreSQL (${AWS::StackName})'
+      GenerateSecretString: { PasswordLength: 32, ExcludePunctuation: true }
+
+  RedisAuthSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: !Sub 'AUTH de Redis (${AWS::StackName})'
+      GenerateSecretString: { PasswordLength: 32, ExcludePunctuation: true }
+
+  JwtSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: !Sub 'JWT_SECRET (${AWS::StackName})'
+      GenerateSecretString: { PasswordLength: 64, ExcludePunctuation: true }
+
+  JwtRefreshSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: !Sub 'JWT_REFRESH_SECRET (${AWS::StackName})'
+      GenerateSecretString: { PasswordLength: 64, ExcludePunctuation: true }
+
+  AdminPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: !Sub 'Clave inicial del superadministrador DNI 00000000 (${AWS::StackName})'
+      GenerateSecretString:
+        PasswordLength: 14
+        ExcludePunctuation: true
+        ExcludeCharacters: 'lI1O0o'
+
+  # ─────────────────────── Almacenamiento S3 ───────────────────────
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: SoloCloudFront
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub '${SiteBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  # Fotos de actas: privadas, versionadas (nada se pierde por sobrescritura)
+  # y RETENIDAS aunque se borre la pila. Se ven con URLs firmadas de 1 hora.
+  ActasBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration: { Status: Enabled }
+      LifecycleConfiguration:
+        Rules:
+          - Id: versiones-antiguas
+            Status: Enabled
+            NoncurrentVersionExpiration: { NoncurrentDays: 60 }
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ['*']
+            AllowedHeaders: ['*']
+            MaxAge: 3600
+
+  # ───────────────────────────── IAM ─────────────────────────────
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy'
+      Policies:
+        - PolicyName: electoral-app
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: LeerPaquetes
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${ArtifactsBucket}/*'
+              - Sid: EscribirRespaldosYDiagnostico
+                Effect: Allow
+                Action: s3:PutObject
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:s3:::${ArtifactsBucket}/respaldos/*'
+                  - !Sub 'arn:${AWS::Partition}:s3:::${ArtifactsBucket}/diagnostico/*'
+              - Sid: Actas
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub '${ActasBucket.Arn}/*'
+              - Sid: ListarActas
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt ActasBucket.Arn
+              - Sid: Secretos
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DbPasswordSecret
+                  - !Ref RedisAuthSecret
+                  - !Ref JwtSecret
+                  - !Ref JwtRefreshSecret
+                  - !Ref AdminPasswordSecret
+              - Sid: SenalDeArranque
+                Effect: Allow
+                Action: cloudformation:SignalResource
+                Resource: !Ref AWS::StackId
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: 30
+
+  # ──────────────────────── PostgreSQL (RDS) ────────────────────────
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subredes privadas de la base de datos
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+
+  # Al borrar la pila queda una instantanea final (se puede restaurar o borrar).
+  DbInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion: !Ref DbEngineVersion
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: '20'
+      MaxAllocatedStorage: 100
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: !Ref DbMultiAZ
+      DBName: sistema_electoral
+      MasterUsername: electoral_user
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${DbPasswordSecret}}}'
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups: [!Ref DbSecurityGroup]
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: '07:00-07:30'
+      # Miercoles 03:00-03:30 de Lima: lejos del domingo electoral.
+      PreferredMaintenanceWindow: 'wed:08:00-wed:08:30'
+      AutoMinorVersionUpgrade: false
+      CopyTagsToSnapshot: true
+      DeletionProtection: false
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-postgres' }]
+
+  # ──────────────────────── Redis (ElastiCache) ────────────────────────
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Subredes privadas de Redis
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+
+  # Cache del dashboard + pub/sub de Socket.io entre servidores.
+  RedisReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      ReplicationGroupDescription: !Sub 'Cache y tiempo real (${AWS::StackName})'
+      Engine: redis
+      EngineVersion: '7.1'
+      CacheNodeType: !Ref RedisNodeType
+      NumCacheClusters: !If [RedisHA, 2, 1]
+      AutomaticFailoverEnabled: !If [RedisHA, true, false]
+      MultiAZEnabled: !If [RedisHA, true, false]
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      SecurityGroupIds: [!Ref RedisSecurityGroup]
+      Port: 6379
+      TransitEncryptionEnabled: true
+      AtRestEncryptionEnabled: true
+      AuthToken: !Sub '{{resolve:secretsmanager:${RedisAuthSecret}}}'
+      SnapshotRetentionLimit: 0
+      PreferredMaintenanceWindow: 'wed:09:00-wed:10:00'
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-redis' }]
+
+  # ──────────────────────── Balanceador (ALB) ────────────────────────
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+      SecurityGroups: [!Ref AlbSecurityGroup]
+      LoadBalancerAttributes:
+        - { Key: idle_timeout.timeout_seconds, Value: '60' }
+        - { Key: routing.http.drop_invalid_header_fields.enabled, Value: 'true' }
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-alb' }]
+
+  # API REST: sin afinidad, cada peticion va al servidor menos ocupado.
+  ApiTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      Protocol: HTTP
+      Port: 3000
+      TargetType: instance
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher: { HttpCode: '200' }
+      TargetGroupAttributes:
+        - { Key: deregistration_delay.timeout_seconds, Value: '20' }
+        - { Key: load_balancing.algorithm.type, Value: least_outstanding_requests }
+
+  # Socket.io: con afinidad (cookie), necesaria si el cliente cae a long-polling.
+  WsTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      Protocol: HTTP
+      Port: 3000
+      TargetType: instance
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher: { HttpCode: '200' }
+      TargetGroupAttributes:
+        - { Key: deregistration_delay.timeout_seconds, Value: '20' }
+        - { Key: stickiness.enabled, Value: 'true' }
+        - { Key: stickiness.type, Value: lb_cookie }
+        - { Key: stickiness.lb_cookie.duration_seconds, Value: '86400' }
+
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: Acceso directo no permitido
+
+  WsListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref AlbListener
+      Priority: 10
+      Conditions:
+        - Field: http-header
+          HttpHeaderConfig: { HttpHeaderName: X-Origin-Verify, Values: [!Ref OriginVerifySecret] }
+        - Field: path-pattern
+          PathPatternConfig: { Values: ['/socket.io/*'] }
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref WsTargetGroup
+
+  ApiListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref AlbListener
+      Priority: 20
+      Conditions:
+        - Field: http-header
+          HttpHeaderConfig: { HttpHeaderName: X-Origin-Verify, Values: [!Ref OriginVerifySecret] }
+        - Field: path-pattern
+          PathPatternConfig: { Values: ['/api/*'] }
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ApiTargetGroup
+
+  # ──────────────────────── CloudFront (HTTPS) ────────────────────────
+  SiteOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-sitio'
+        Description: Acceso de CloudFront al bucket del frontend
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # React Router: /admin/... o /personero/... no existen como archivo en S3,
+  # se sirve index.html. Solo aplica al frontend, nunca a /api (asi los 404 y
+  # 403 reales de la API llegan intactos al navegador).
+  SpaRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${AWS::StackName}-spa'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Reescribe rutas del SPA a /index.html
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+          if (uri === '/' || uri.lastIndexOf('.') <= uri.lastIndexOf('/')) {
+            request.uri = '/index.html';
+          }
+          return request;
+        }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub 'Sistema Electoral (${AWS::StackName})'
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_All
+        DefaultRootObject: index.html
+        Aliases: !If [HasCustomDomain, [!Ref CustomDomain], !Ref AWS::NoValue]
+        ViewerCertificate: !If
+          - HasCustomDomain
+          - AcmCertificateArn: !Ref CustomDomainCertArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: sitio
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            S3OriginConfig: { OriginAccessIdentity: '' }
+            OriginAccessControlId: !GetAtt SiteOriginAccessControl.Id
+          - Id: api
+            DomainName: !GetAtt Alb.DNSName
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              # Menor que el idle timeout del ALB (60 s): CloudFront cierra primero
+              # y nunca reutiliza una conexion que el ALB acaba de cerrar (evita 502).
+              OriginKeepaliveTimeout: 30
+            OriginCustomHeaders:
+              - HeaderName: X-Origin-Verify
+                HeaderValue: !Ref OriginVerifySecret
+        DefaultCacheBehavior:
+          TargetOriginId: sitio
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6          # Managed-CachingOptimized
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03 # Managed-SecurityHeadersPolicy
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRewriteFunction.FunctionMetadata.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            Compress: false
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+          - PathPattern: /socket.io/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            Compress: false
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+
+  # ──────────────────── Servidores con autoescalado ────────────────────
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile: { Arn: !GetAtt InstanceProfile.Arn }
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+          HttpPutResponseHopLimit: 2
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: true
+            DeleteOnTermination: true
+            Groups: [!Ref AppSecurityGroup]
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: { VolumeSize: 20, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+        TagSpecifications:
+          - ResourceType: instance
+            Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-app' }]
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              # Arranque de un servidor de aplicacion. La logica esta en
+              # aws/instancia/arranque.sh dentro del paquete; aqui solo se
+              # dejan los datos de la infraestructura y se descarga el paquete.
+              set -euo pipefail
+              mkdir -p /etc/electoral /opt/electoral /var/log/electoral
+              exec > >(tee -a /var/log/electoral/arranque.log) 2>&1
+              echo "== Arranque $(date -Is)"
+              TOKEN=$(curl -sS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')
+              INSTANCE_ID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+              senal() {
+                aws cloudformation signal-resource --region ${AWS::Region} --stack-name ${AWS::StackName} \
+                  --logical-resource-id AutoScalingGroup --unique-id "$INSTANCE_ID" --status "$1" || true
+              }
+              fallo() {
+                echo "ERROR: el arranque fallo en la linea $1"
+                aws s3 cp /var/log/electoral/arranque.log "s3://${ArtifactsBucket}/diagnostico/${AWS::StackName}/$INSTANCE_ID.log" --region ${AWS::Region} || true
+                senal FAILURE
+                exit 1
+              }
+              trap 'fallo $LINENO' ERR
+              cat > /etc/electoral/infra.env <<'EOF'
+              REGION=${AWS::Region}
+              STACK=${AWS::StackName}
+              ARTIFACTS_BUCKET=${ArtifactsBucket}
+              ARTIFACT_KEY=${ArtifactKey}
+              NODE_TARBALL_KEY=${NodeTarballKey}
+              DB_HOST=${DbInstance.Endpoint.Address}
+              DB_PORT=${DbInstance.Endpoint.Port}
+              REDIS_HOST=${RedisReplicationGroup.PrimaryEndPoint.Address}
+              REDIS_PORT=${RedisReplicationGroup.PrimaryEndPoint.Port}
+              ACTAS_BUCKET=${ActasBucket}
+              CORS_ORIGIN=${CorsOrigins}
+              LOG_GROUP=${AppLogGroup}
+              JWT_EXPIRES_IN=${JwtExpiresIn}
+              SECRET_DB_ARN=${DbPasswordSecret}
+              SECRET_REDIS_ARN=${RedisAuthSecret}
+              SECRET_JWT_ARN=${JwtSecret}
+              SECRET_JWT_REFRESH_ARN=${JwtRefreshSecret}
+              SECRET_ADMIN_ARN=${AdminPasswordSecret}
+              EOF
+              echo "INSTANCE_ID=$INSTANCE_ID" >> /etc/electoral/infra.env
+              chmod 600 /etc/electoral/infra.env
+              aws s3 cp "s3://${ArtifactsBucket}/${ArtifactKey}" /opt/electoral/app.tar.gz --region ${AWS::Region} --only-show-errors
+              rm -rf /opt/electoral/app && mkdir -p /opt/electoral/app
+              tar -xzf /opt/electoral/app.tar.gz -C /opt/electoral/app
+              bash /opt/electoral/app/aws/instancia/arranque.sh
+              trap - ERR
+              senal SUCCESS
+              echo "== Servidor listo $(date -Is)"
+            - CorsOrigins: !If
+                - HasCustomDomain
+                - !Sub 'https://${Distribution.DomainName},https://${CustomDomain}'
+                - !Sub 'https://${Distribution.DomainName}'
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: [ApiListenerRule, WsListenerRule]
+    CreationPolicy:
+      ResourceSignal:
+        Count: !Ref MinInstances
+        Timeout: PT20M
+    UpdatePolicy:
+      # Actualizacion de codigo sin cortes: reemplaza de a un servidor y espera
+      # a que el nuevo responda antes de seguir. Si falla, CloudFormation revierte.
+      # Solo ocurre cuando cambia el paquete del backend (desplegar.sh fija la AMI
+      # y Node). Mientras dura se pausan autoescalado y acciones programadas, por
+      # eso desplegar.sh pide confirmacion para actualizar codigo el 4 de octubre.
+      AutoScalingRollingUpdate:
+        MinInstancesInService: !Ref MinInstances
+        MaxBatchSize: 1
+        PauseTime: PT15M
+        WaitOnResourceSignals: true
+        SuspendProcesses: [HealthCheck, ReplaceUnhealthy, AZRebalance, AlarmNotification, ScheduledActions]
+      AutoScalingScheduledAction:
+        IgnoreUnmodifiedGroupSizeProperties: true
+    Properties:
+      VPCZoneIdentifier: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinInstances
+      MaxSize: !Ref MaxInstances
+      TargetGroupARNs: [!Ref ApiTargetGroup, !Ref WsTargetGroup]
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      DefaultInstanceWarmup: 120
+      MetricsCollection:
+        - Granularity: 1Minute
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-app', PropagateAtLaunch: true }
+
+  # Escala por CPU: Node usa un nucleo por proceso, asi que 40% de la
+  # instancia (2 vCPU) ya es un nucleo muy cargado.
+  CpuScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification: { PredefinedMetricType: ASGAverageCPUUtilization }
+        TargetValue: 40
+
+  # Y por peticiones por servidor (reacciona antes que la CPU a una avalancha).
+  RequestScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ALBRequestCountPerTarget
+          ResourceLabel: !Join ['/', [!GetAtt Alb.LoadBalancerFullName, !GetAtt ApiTargetGroup.TargetGroupFullName]]
+        TargetValue: 1500
+
+  # Pre-escalado del domingo 4 de octubre (hora de Lima). Se repite cada ano
+  # en esa fecha; con ElectionDaySchedule=false no se crea.
+  PicoMananaInicio:
+    Type: AWS::AutoScaling::ScheduledAction
+    Condition: UseSchedule
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      Recurrence: '0 6 4 10 *'
+      TimeZone: America/Lima
+      MinSize: !Ref PeakInstances
+      MaxSize: !Ref MaxInstances
+
+  PicoMananaFin:
+    Type: AWS::AutoScaling::ScheduledAction
+    Condition: UseSchedule
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      Recurrence: '30 10 4 10 *'
+      TimeZone: America/Lima
+      MinSize: !Ref MinInstances
+      MaxSize: !Ref MaxInstances
+
+  PicoTardeInicio:
+    Type: AWS::AutoScaling::ScheduledAction
+    Condition: UseSchedule
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      Recurrence: '0 15 4 10 *'
+      TimeZone: America/Lima
+      MinSize: !Ref PeakInstances
+      MaxSize: !Ref MaxInstances
+
+  PicoTardeFin:
+    Type: AWS::AutoScaling::ScheduledAction
+    Condition: UseSchedule
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      Recurrence: '0 1 5 10 *'
+      TimeZone: America/Lima
+      MinSize: !Ref MinInstances
+      MaxSize: !Ref MaxInstances
+
+  # ─────────────────────── Monitoreo y avisos ───────────────────────
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasEmail
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  AlarmTarget5xx:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasEmail
+    Properties:
+      AlarmDescription: Errores 5xx del backend (mas de 25 en 5 minutos)
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions: [{ Name: LoadBalancer, Value: !GetAtt Alb.LoadBalancerFullName }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 25
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  AlarmUnhealthyHosts:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasEmail
+    Properties:
+      AlarmDescription: Hay servidores que no responden al health check
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions:
+        - { Name: LoadBalancer, Value: !GetAtt Alb.LoadBalancerFullName }
+        - { Name: TargetGroup, Value: !GetAtt ApiTargetGroup.TargetGroupFullName }
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  AlarmAsgAtMax:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasEmail
+    Properties:
+      AlarmDescription: El autoescalado llego al maximo de servidores
+      Namespace: AWS/AutoScaling
+      MetricName: GroupInServiceInstances
+      Dimensions: [{ Name: AutoScalingGroupName, Value: !Ref AutoScalingGroup }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: !Ref MaxInstances
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  AlarmDbCpu:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasEmail
+    Properties:
+      AlarmDescription: CPU de PostgreSQL sobre 80%
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Dimensions: [{ Name: DBInstanceIdentifier, Value: !Ref DbInstance }]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions: [!Ref AlarmTopic]
+
+  AlarmDbConnections:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasEmail
+    Properties:
+      AlarmDescription: Demasiadas conexiones a PostgreSQL
+      Namespace: AWS/RDS
+      MetricName: DatabaseConnections
+      Dimensions: [{ Name: DBInstanceIdentifier, Value: !Ref DbInstance }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 320
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions: [!Ref AlarmTopic]
+
+  AlarmDbStorage:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasEmail
+    Properties:
+      AlarmDescription: Poco espacio libre en PostgreSQL (menos de 2 GB)
+      Namespace: AWS/RDS
+      MetricName: FreeStorageSpace
+      Dimensions: [{ Name: DBInstanceIdentifier, Value: !Ref DbInstance }]
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 2147483648
+      ComparisonOperator: LessThanThreshold
+      AlarmActions: [!Ref AlarmTopic]
+
+  AlarmRedisCpu:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasEmail
+    Properties:
+      AlarmDescription: CPU de Redis sobre 80%
+      Namespace: AWS/ElastiCache
+      MetricName: EngineCPUUtilization
+      Dimensions: [{ Name: CacheClusterId, Value: !Sub '${RedisReplicationGroup}-001' }]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  CostBudget:
+    Type: AWS::Budgets::Budget
+    Condition: HasEmail
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-presupuesto-mensual'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: !Ref MonthlyBudgetUsd, Unit: USD }
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${AWS::StackName}-jornada'
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {"type":"metric","x":0,"y":0,"width":12,"height":6,"properties":{
+                "title":"Peticiones y errores (ALB)","region":"${AWS::Region}","stat":"Sum","period":60,
+                "metrics":[
+                  ["AWS/ApplicationELB","RequestCount","LoadBalancer","${AlbName}"],
+                  [".","HTTPCode_Target_5XX_Count",".","."],
+                  [".","HTTPCode_Target_4XX_Count",".","."]]}},
+              {"type":"metric","x":12,"y":0,"width":12,"height":6,"properties":{
+                "title":"Tiempo de respuesta (p90, s)","region":"${AWS::Region}","stat":"p90","period":60,
+                "metrics":[["AWS/ApplicationELB","TargetResponseTime","LoadBalancer","${AlbName}"]]}},
+              {"type":"metric","x":0,"y":6,"width":12,"height":6,"properties":{
+                "title":"Servidores en servicio y CPU","region":"${AWS::Region}","period":60,
+                "metrics":[
+                  ["AWS/AutoScaling","GroupInServiceInstances","AutoScalingGroupName","${AutoScalingGroup}",{"stat":"Maximum"}],
+                  ["AWS/EC2","CPUUtilization","AutoScalingGroupName","${AutoScalingGroup}",{"stat":"Average","yAxis":"right"}]]}},
+              {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{
+                "title":"PostgreSQL","region":"${AWS::Region}","period":60,
+                "metrics":[
+                  ["AWS/RDS","CPUUtilization","DBInstanceIdentifier","${DbInstance}",{"stat":"Average"}],
+                  [".","DatabaseConnections",".",".",{"stat":"Maximum","yAxis":"right"}]]}},
+              {"type":"metric","x":0,"y":12,"width":12,"height":6,"properties":{
+                "title":"Redis","region":"${AWS::Region}","period":60,
+                "metrics":[
+                  ["AWS/ElastiCache","EngineCPUUtilization","CacheClusterId","${RedisReplicationGroup}-001",{"stat":"Average"}],
+                  [".","CurrConnections",".",".",{"stat":"Maximum","yAxis":"right"}]]}},
+              {"type":"log","x":12,"y":12,"width":12,"height":6,"properties":{
+                "title":"Errores recientes del backend","region":"${AWS::Region}",
+                "query":"SOURCE '${AppLogGroup}' | fields @timestamp, @logStream, @message | filter @message like /(?i)(error|fatal|aviso)/ | sort @timestamp desc | limit 50",
+                "view":"table"}}
+            ]
+          }
+        - AlbName: !GetAtt Alb.LoadBalancerFullName
+
+Outputs:
+  Url:
+    Description: Direccion del sistema para personeros, coordinadores y administradores
+    Value: !If [HasCustomDomain, !Sub 'https://${CustomDomain}', !Sub 'https://${Distribution.DomainName}']
+  CloudFrontDomain:
+    Value: !GetAtt Distribution.DomainName
+  DistributionId:
+    Value: !Ref Distribution
+  SiteBucketName:
+    Value: !Ref SiteBucket
+  ActasBucketName:
+    Value: !Ref ActasBucket
+  AutoScalingGroupName:
+    Value: !Ref AutoScalingGroup
+  DbInstanceId:
+    Value: !Ref DbInstance
+  DbEndpoint:
+    Value: !GetAtt DbInstance.Endpoint.Address
+  RedisGroupId:
+    Value: !Ref RedisReplicationGroup
+  AdminPasswordSecretArn:
+    Value: !Ref AdminPasswordSecret
+  ApiTargetGroupArn:
+    Value: !Ref ApiTargetGroup
+  AppLogGroupName:
+    Value: !Ref AppLogGroup
+  DashboardUrl:
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-jornada'

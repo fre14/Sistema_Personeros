@@ -15,7 +15,9 @@ export const authenticateToken = (req, res, next) => {
     req.user = decoded;
     next();
   } catch (error) {
-    return res.status(403).json({ success: false, message: 'Invalid token.' });
+    // 401 (no 403): el frontend solo renueva el token ante un 401. Con 403 el
+    // personero quedaba bloqueado al vencer su token en plena jornada.
+    return res.status(401).json({ success: false, message: 'Invalid token.' });
   }
 };
 
