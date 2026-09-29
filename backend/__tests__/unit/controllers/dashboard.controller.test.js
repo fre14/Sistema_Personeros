@@ -299,6 +299,99 @@ describe('getComposicionVoto', () => {
 
     expect(res.status).toHaveBeenCalledWith(500);
   });
+
+  it('marca nulidad critica si blancos + nulos superan 2/3 de los emitidos', async () => {
+    mockDb.queue('resultados_mesa', {
+      total_emitidos: '1000', votos_blanco: '400', votos_nulo: '300', votos_impugnados: '20',
+      actas_contabilizadas: '10', actas_con_impugnados: '3',
+    });
+    mockDb.queue('detalle_resultados', [
+      { candidato_id: 1, total_votos: '150' },
+      { candidato_id: 2, total_votos: '130' },
+    ]);
+    const res = crearRes();
+
+    await getComposicionVoto(crearReq({ user: usuarioAdmin() }), res);
+
+    const { data } = res.body;
+    expect(data.es_contienda_completa).toBe(true);
+    expect(data.actas_contabilizadas).toBe(10);
+    expect(data.nulidad).toMatchObject({
+      nivel: 'critico', supera_limite: true, porcentaje_blanco_nulo: 70, limite_porcentaje: 66.67,
+    });
+    expect(data.impugnacion).toEqual({
+      votos_impugnados: 20, actas_con_impugnados: 3,
+      margen_primero_segundo: 20, podrian_cambiar_ganador: true,
+    });
+  });
+
+  it('nivel de alerta y margen holgado frente a los impugnados', async () => {
+    mockDb.queue('resultados_mesa', {
+      total_emitidos: '1000', votos_blanco: '300', votos_nulo: '250', votos_impugnados: '10',
+      actas_contabilizadas: '8', actas_con_impugnados: '1',
+    });
+    mockDb.queue('detalle_resultados', [
+      { candidato_id: 1, total_votos: '300' },
+      { candidato_id: 2, total_votos: '140' },
+    ]);
+    const res = crearRes();
+
+    await getComposicionVoto(crearReq({ user: usuarioAdmin() }), res);
+
+    expect(res.body.data.nulidad.nivel).toBe('alerta');
+    expect(res.body.data.impugnacion).toMatchObject({
+      margen_primero_segundo: 160, podrian_cambiar_ganador: false,
+    });
+  });
+
+  it('en un distrito de la eleccion provincial no calcula margen (no es la contienda completa)', async () => {
+    mockDb.queue('resultados_mesa', {
+      total_emitidos: '100', votos_blanco: '5', votos_nulo: '5', votos_impugnados: '4',
+    });
+    const res = crearRes();
+
+    await getComposicionVoto(
+      crearReq({ user: usuarioAdmin(), query: { distrito_id: '3' } }), res,
+    );
+
+    expect(res.body.data.es_contienda_completa).toBe(false);
+    expect(res.body.data.impugnacion.margen_primero_segundo).toBeNull();
+    expect(res.body.data.impugnacion.votos_impugnados).toBe(4);
+    expect(mockDb.tablasUsadas()).not.toContain('detalle_resultados');
+  });
+
+  it('en la eleccion distrital, un distrito elegido si es contienda completa', async () => {
+    mockDb.queue('resultados_mesa', {
+      total_emitidos: '200', votos_blanco: '10', votos_nulo: '10', votos_impugnados: '6',
+      actas_contabilizadas: '1', actas_con_impugnados: '1',
+    });
+    mockDb.queue('detalle_resultados', [
+      { candidato_id: 7, total_votos: '90' },
+      { candidato_id: 8, total_votos: '86' },
+    ]);
+    const res = crearRes();
+
+    await getComposicionVoto(
+      crearReq({ user: usuarioAdmin(), query: { tipo_eleccion: 'distrital', distrito_id: '5' } }), res,
+    );
+
+    expect(res.body.data.es_contienda_completa).toBe(true);
+    expect(res.body.data.impugnacion).toMatchObject({
+      margen_primero_segundo: 4, podrian_cambiar_ganador: true,
+    });
+  });
+
+  it('en la eleccion distrital sin distrito elegido no calcula margen', async () => {
+    mockDb.queue('resultados_mesa', { total_emitidos: '50' });
+    const res = crearRes();
+
+    await getComposicionVoto(
+      crearReq({ user: usuarioAdmin(), query: { tipo_eleccion: 'distrital' } }), res,
+    );
+
+    expect(res.body.data.es_contienda_completa).toBe(false);
+    expect(mockDb.tablasUsadas()).not.toContain('detalle_resultados');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -364,6 +457,32 @@ describe('getResultadosPorCandidato', () => {
     await getResultadosPorCandidato(crearReq({ user: usuarioAdmin() }), res);
 
     expect(res.status).toHaveBeenCalledWith(500);
+  });
+
+  it('agrega el porcentaje sobre votos emitidos como referencia', async () => {
+    mockDb.queue('detalle_resultados', [
+      { id: 1, total_votos: '600' },
+      { id: 2, total_votos: '400' },
+    ]);
+    mockDb.queue('resultados_mesa', { s: '1250' });
+    const res = crearRes();
+
+    await getResultadosPorCandidato(crearReq({ user: usuarioAdmin() }), res);
+
+    expect(res.body.data[0]).toMatchObject({ porcentaje: 60, porcentaje_emitidos: 48 });
+    expect(res.body.data[1]).toMatchObject({ porcentaje: 40, porcentaje_emitidos: 32 });
+  });
+
+  it('en la eleccion distrital sin distrito elegido el % sobre emitidos no aplica', async () => {
+    mockDb.queue('detalle_resultados', [{ id: 1, total_votos: '10' }]);
+    const res = crearRes();
+
+    await getResultadosPorCandidato(
+      crearReq({ user: usuarioAdmin(), query: { tipo_eleccion: 'distrital' } }), res,
+    );
+
+    expect(res.body.data[0].porcentaje_emitidos).toBeNull();
+    expect(mockDb.tablasUsadas()).not.toContain('resultados_mesa');
   });
 });
 

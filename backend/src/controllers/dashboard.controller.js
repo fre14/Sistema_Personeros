@@ -1,5 +1,6 @@
 import db from '../config/database.js';
 import { cacheWrap } from '../services/cache.service.js';
+import { evaluarNulidad, evaluarImpugnados, porcentaje } from '../services/escrutinio.service.js';
 
 const TTL = Number(process.env.CACHE_TTL_SECONDS || 5);
 const num = (v) => Number(v || 0);
@@ -149,7 +150,9 @@ export const getComposicionVoto = async (req, res) => {
         db.raw('COALESCE(SUM(rm.total_votos_emitidos), 0) as total_emitidos'),
         db.raw('COALESCE(SUM(rm.votos_blanco), 0) as votos_blanco'),
         db.raw('COALESCE(SUM(rm.votos_nulo), 0) as votos_nulo'),
-        db.raw('COALESCE(SUM(rm.votos_impugnados), 0) as votos_impugnados')
+        db.raw('COALESCE(SUM(rm.votos_impugnados), 0) as votos_impugnados'),
+        db.raw('COUNT(*) as actas_contabilizadas'),
+        db.raw('COUNT(*) FILTER (WHERE rm.votos_impugnados > 0) as actas_con_impugnados')
       ).first();
 
       const emitidos = num(fila?.total_emitidos);
@@ -158,6 +161,31 @@ export const getComposicionVoto = async (req, res) => {
       const impugnados = num(fila?.votos_impugnados);
       const validos = Math.max(0, emitidos - blanco - nulo - impugnados);
 
+      // El margen entre 1.o y 2.o solo tiene sentido en una contienda completa:
+      // toda la provincia (alcalde provincial) o un distrito entero (distrital).
+      const contiendaCompleta = esDistrital
+        ? Boolean(distrito_id) && !local_id
+        : !distrito_id && !local_id;
+      let votosOrdenados = null;
+      if (contiendaCompleta) {
+        let top = db('detalle_resultados as dr')
+          .join('resultados_mesa as rm', 'dr.resultado_id', 'rm.id')
+          .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
+          .join('locales_votacion as l', 'm.local_id', 'l.id')
+          .join('candidatos as c', 'dr.candidato_id', 'c.id')
+          .where('rm.estado', 'verificado')
+          .where('rm.tipo_eleccion', tipoFiltro)
+          .where('c.tipo_eleccion', tipoFiltro)
+          .select('dr.candidato_id')
+          .sum('dr.votos as total_votos')
+          .groupBy('dr.candidato_id')
+          .orderBy('total_votos', 'desc')
+          .limit(2);
+        if (esDistrital) top = top.where('l.distrito_id', distrito_id).where('c.distrito_id', distrito_id);
+        const filasTop = await top;
+        votosOrdenados = Array.isArray(filasTop) ? filasTop.map((f) => num(f.total_votos)) : [];
+      }
+
       return {
         tipo_eleccion: tipoFiltro,
         total_emitidos: emitidos,
@@ -165,10 +193,18 @@ export const getComposicionVoto = async (req, res) => {
         votos_blanco: blanco,
         votos_nulo: nulo,
         votos_impugnados: impugnados,
-        porcentaje_validos: emitidos ? Number(((validos / emitidos) * 100).toFixed(2)) : 0,
-        porcentaje_blanco: emitidos ? Number(((blanco / emitidos) * 100).toFixed(2)) : 0,
-        porcentaje_nulo: emitidos ? Number(((nulo / emitidos) * 100).toFixed(2)) : 0,
-        porcentaje_impugnados: emitidos ? Number(((impugnados / emitidos) * 100).toFixed(2)) : 0,
+        porcentaje_validos: porcentaje(validos, emitidos),
+        porcentaje_blanco: porcentaje(blanco, emitidos),
+        porcentaje_nulo: porcentaje(nulo, emitidos),
+        porcentaje_impugnados: porcentaje(impugnados, emitidos),
+        actas_contabilizadas: num(fila?.actas_contabilizadas),
+        es_contienda_completa: contiendaCompleta,
+        nulidad: evaluarNulidad({ emitidos, blanco, nulo }),
+        impugnacion: evaluarImpugnados({
+          impugnados,
+          actasConImpugnados: num(fila?.actas_con_impugnados),
+          votosOrdenados,
+        }),
       };
     });
 
@@ -211,10 +247,28 @@ export const getResultadosPorCandidato = async (req, res) => {
       const filas = await query.orderBy('total_votos', 'desc');
       const total = filas.reduce((acc, f) => acc + num(f.total_votos), 0);
 
+      // % sobre votos emitidos (referencial), con las mismas actas y filtros.
+      // En distrital sin distrito elegido se mezclan contiendas distintas: no aplica.
+      const aplicaEmitidos = !esDistrital || Boolean(distrito_id);
+      let emitidos = 0;
+      if (aplicaEmitidos) {
+        let qEmitidos = db('resultados_mesa as rm')
+          .join('mesas_sufragio as m', 'rm.mesa_id', 'm.id')
+          .join('locales_votacion as l', 'm.local_id', 'l.id')
+          .where('rm.estado', 'verificado')
+          .where('rm.tipo_eleccion', tipoFiltro);
+        if (distrito_id) qEmitidos = qEmitidos.where('l.distrito_id', distrito_id);
+        if (local_id) qEmitidos = qEmitidos.where('m.local_id', local_id);
+        const filaEmitidos = await qEmitidos.sum('rm.total_votos_emitidos as s').first();
+        emitidos = num(filaEmitidos?.s);
+      }
+
       return filas.map((f) => ({
         ...f,
         total_votos: num(f.total_votos),
-        porcentaje: total ? Number(((num(f.total_votos) / total) * 100).toFixed(2)) : 0,
+        // Porcentaje oficial: sobre votos validos (blancos y nulos no se computan).
+        porcentaje: porcentaje(num(f.total_votos), total),
+        porcentaje_emitidos: aplicaEmitidos ? porcentaje(num(f.total_votos), emitidos) : null,
       }));
     });
 

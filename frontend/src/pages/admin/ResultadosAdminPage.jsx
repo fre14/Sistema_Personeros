@@ -157,6 +157,9 @@ const ResultadosAdminPage = () => {
         candidato: c.nombre_completo || `Lista ${c.numero_lista}`,
         votos: Number(c.total_votos || 0),
         porcentaje: Number(c.porcentaje || 0),
+        porcentajeEmitidos: c.porcentaje_emitidos === null || c.porcentaje_emitidos === undefined
+          ? null
+          : Number(c.porcentaje_emitidos),
         organizacion: c.organizacion_politica || '',
         siglas: c.siglas || '',
         numero_lista: c.numero_lista,
@@ -885,7 +888,7 @@ const ResultadosAdminPage = () => {
                                   <p className="font-bold text-red-400">{data.candidato}</p>
                                   <p className="text-gray-300">{data.organizacion} ({data.siglas})</p>
                                   <p className="text-white font-mono font-bold text-sm">
-                                    {data.votos} votos ({data.porcentaje}%)
+                                    {data.votos} votos ({data.porcentaje}% de válidos)
                                   </p>
                                 </div>
                               );
@@ -1134,26 +1137,156 @@ const ResultadosAdminPage = () => {
                   <div>
                     <span className="text-[10px] text-gray-500 block">Blancos</span>
                     <strong className="text-amber-700 font-mono">{composicionVotos.votos_blanco || 0}</strong>
+                    <span className="text-[10px] text-gray-400 block">{Number(composicionVotos.porcentaje_blanco || 0).toFixed(2)}% emit.</span>
                   </div>
                   <div>
                     <span className="text-[10px] text-gray-500 block">Nulos</span>
                     <strong className="text-red-700 font-mono">{composicionVotos.votos_nulo || 0}</strong>
+                    <span className="text-[10px] text-gray-400 block">{Number(composicionVotos.porcentaje_nulo || 0).toFixed(2)}% emit.</span>
                   </div>
                   <div>
                     <span className="text-[10px] text-gray-500 block">Impugnados</span>
                     <strong className="text-purple-700 font-mono">{composicionVotos.votos_impugnados || 0}</strong>
+                    <span className="text-[10px] text-gray-400 block">{Number(composicionVotos.porcentaje_impugnados || 0).toFixed(2)}% emit.</span>
                   </div>
                 </div>
+              )}
+              {composicionVotos && (
+                <p className="mt-2 text-[11px] text-gray-500 text-center leading-snug">
+                  <strong>Votos válidos</strong> = emitidos − blancos − nulos − impugnados
+                  {' · '}Emitidos: <strong className="font-mono">{composicionVotos.total_emitidos || 0}</strong>
+                </p>
               )}
             </div>
 
           </div>
 
           {/* ===================================================== */}
+          {/* INDICADORES LEGALES: NULIDAD E IMPUGNADOS             */}
+          {/* ===================================================== */}
+          {composicionVotos?.nulidad && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {(() => {
+                const n = composicionVotos.nulidad;
+                const estilos = {
+                  sin_datos: { caja: 'bg-gray-50 border-gray-200', barra: 'bg-gray-300', texto: 'text-gray-600', titulo: 'Sin actas verificadas todavía' },
+                  normal: { caja: 'bg-emerald-50 border-emerald-200', barra: 'bg-emerald-500', texto: 'text-emerald-800', titulo: 'Dentro del margen normal' },
+                  alerta: { caja: 'bg-amber-50 border-amber-300', barra: 'bg-amber-500', texto: 'text-amber-900', titulo: 'Atención: blancos y nulos altos (50 % o más)' },
+                  critico: { caja: 'bg-red-50 border-red-300', barra: 'bg-red-600', texto: 'text-red-900', titulo: 'Supera el límite de nulidad (dos tercios)' },
+                }[n.nivel] || { caja: 'bg-gray-50 border-gray-200', barra: 'bg-gray-300', texto: 'text-gray-600', titulo: '' };
+                const ancho = Math.min(100, Number(n.porcentaje_blanco_nulo || 0));
+                return (
+                  <div className={`p-5 rounded-2xl border shadow-sm ${estilos.caja}`}>
+                    <h3 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                      <ShieldCheck size={18} className="text-red-600" />
+                      Indicador de nulidad
+                    </h3>
+                    <p className={`text-sm font-bold mt-1 ${estilos.texto}`}>{estilos.titulo}</p>
+                    <div className="mt-3 relative h-4 bg-white rounded-full border border-gray-200 overflow-hidden">
+                      <div className={`h-full ${estilos.barra}`} style={{ width: `${ancho}%` }} />
+                      <div
+                        className="absolute top-0 bottom-0 w-0.5 bg-gray-900"
+                        style={{ left: `${n.limite_porcentaje}%` }}
+                        title="Límite constitucional: dos tercios de los votos emitidos"
+                      />
+                    </div>
+                    <div className="relative h-4 mt-1 text-[11px] text-gray-500">
+                      <span className="absolute left-0">0%</span>
+                      <span className="absolute -translate-x-1/2 font-bold text-gray-800" style={{ left: `${n.limite_porcentaje}%` }}>
+                        Límite {n.limite_porcentaje}%
+                      </span>
+                      <span className="absolute right-0">100%</span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                      <div>
+                        <span className="block text-gray-500">Blancos</span>
+                        <strong className="font-mono">{Number(n.porcentaje_blanco || 0).toFixed(2)}%</strong>
+                      </div>
+                      <div>
+                        <span className="block text-gray-500">Nulos</span>
+                        <strong className="font-mono">{Number(n.porcentaje_nulo || 0).toFixed(2)}%</strong>
+                      </div>
+                      <div>
+                        <span className="block text-gray-500">Blancos + nulos</span>
+                        <strong className="font-mono">{Number(n.porcentaje_blanco_nulo || 0).toFixed(2)}%</strong>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs text-gray-600 leading-relaxed">
+                      Blancos y nulos no suman a ningún candidato. Según la Constitución (art. 184), la elección
+                      se anula si los votos nulos o en blanco, sumados o por separado, superan los dos tercios
+                      de los votos emitidos.
+                      {!composicionVotos.es_contienda_completa && (
+                        <span className="block mt-1 font-semibold text-gray-700">
+                          Con este filtro el indicador es referencial: la nulidad se evalúa en toda la
+                          circunscripción (provincia o distrito).
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                );
+              })()}
+
+              {(() => {
+                const imp = composicionVotos.impugnacion || {};
+                const hay = Number(imp.votos_impugnados || 0) > 0;
+                const riesgo = Boolean(imp.podrian_cambiar_ganador);
+                const caja = riesgo
+                  ? 'bg-red-50 border-red-300'
+                  : hay ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200';
+                const hayMargen = imp.margen_primero_segundo !== null && imp.margen_primero_segundo !== undefined;
+                return (
+                  <div className={`p-5 rounded-2xl border shadow-sm ${caja}`}>
+                    <h3 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                      <AlertTriangle size={18} className="text-purple-600" />
+                      Votos impugnados pendientes (JEE)
+                    </h3>
+                    {hay ? (
+                      <>
+                        <p className="text-sm text-gray-800 mt-2">
+                          <strong className="font-mono">{imp.votos_impugnados}</strong> votos en{' '}
+                          <strong className="font-mono">{imp.actas_con_impugnados || 0}</strong> actas esperan la
+                          resolución del Jurado Electoral Especial. Todavía no suman a ningún candidato: al
+                          resolverse pasan a una lista o a nulos.
+                        </p>
+                        {hayMargen ? (
+                          <p className="text-sm text-gray-800 mt-2">
+                            Diferencia entre el 1.º y el 2.º lugar:{' '}
+                            <strong className="font-mono">{imp.margen_primero_segundo}</strong> votos.
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-500 mt-2">
+                            La comparación con el primer lugar aparece al ver toda la provincia, o un distrito
+                            completo en la elección distrital.
+                          </p>
+                        )}
+                        {riesgo && (
+                          <p className="mt-3 text-sm font-bold text-red-800 flex items-start gap-2">
+                            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                            Los impugnados alcanzan para empatar o cambiar el primer lugar. Conviene seguir su
+                            resolución en el JEE.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-sm text-gray-600 mt-2">
+                        No hay votos impugnados en las actas verificadas de este ámbito.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* ===================================================== */}
           {/* TABLA DE RESULTADOS OFICIALES POR CANDIDATO           */}
           {/* ===================================================== */}
           {votosCandidatos.length > 0 && (
             <Card title={`📋 Tabla Consolidada de Resultados (${nombreAmbitoActual})`}>
+              <p className="text-xs text-gray-500 mb-3">
+                El porcentaje oficial de cada candidato se calcula sobre los <strong>votos válidos</strong>:
+                blancos, nulos e impugnados no se computan. El % sobre emitidos es solo referencial.
+              </p>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
                   <thead className="bg-gray-50 text-xs font-bold text-gray-600 uppercase">
@@ -1164,6 +1297,7 @@ const ResultadosAdminPage = () => {
                       <th className="px-4 py-3 text-center">Siglas</th>
                       <th className="px-4 py-3 text-right">Votos Verificados</th>
                       <th className="px-4 py-3 text-right">% Votos Válidos</th>
+                      <th className="px-4 py-3 text-right">% Votos Emitidos</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white">
@@ -1194,9 +1328,66 @@ const ResultadosAdminPage = () => {
                         <td className="px-4 py-3 text-right font-black font-mono text-red-700">
                           {c.porcentaje.toFixed(2)}%
                         </td>
+                        <td className="px-4 py-3 text-right font-mono text-gray-600">
+                          {c.porcentajeEmitidos === null ? '—' : `${c.porcentajeEmitidos.toFixed(2)}%`}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
+                  {composicionVotos && (
+                    <tfoot className="bg-gray-50 text-sm">
+                      {[
+                        {
+                          etiqueta: 'Total votos válidos',
+                          votos: composicionVotos.votos_validos,
+                          sobreValidos: Number(composicionVotos.votos_validos || 0) > 0 ? 100 : 0,
+                          sobreEmitidos: composicionVotos.porcentaje_validos,
+                          clase: 'font-extrabold text-emerald-800',
+                        },
+                        {
+                          etiqueta: 'Votos en blanco (no se computan)',
+                          votos: composicionVotos.votos_blanco,
+                          sobreValidos: null,
+                          sobreEmitidos: composicionVotos.porcentaje_blanco,
+                          clase: 'text-amber-800',
+                        },
+                        {
+                          etiqueta: 'Votos nulos (no se computan)',
+                          votos: composicionVotos.votos_nulo,
+                          sobreValidos: null,
+                          sobreEmitidos: composicionVotos.porcentaje_nulo,
+                          clase: 'text-red-800',
+                        },
+                        {
+                          etiqueta: 'Votos impugnados (pendientes del JEE)',
+                          votos: composicionVotos.votos_impugnados,
+                          sobreValidos: null,
+                          sobreEmitidos: composicionVotos.porcentaje_impugnados,
+                          clase: 'text-purple-800',
+                        },
+                        {
+                          etiqueta: 'Total votos emitidos',
+                          votos: composicionVotos.total_emitidos,
+                          sobreValidos: null,
+                          sobreEmitidos: Number(composicionVotos.total_emitidos || 0) > 0 ? 100 : 0,
+                          clase: 'font-extrabold text-gray-900',
+                        },
+                      ].map((fila) => (
+                        <tr key={fila.etiqueta} className="border-t border-gray-200">
+                          <td colSpan={4} className={`px-4 py-2 ${fila.clase}`}>{fila.etiqueta}</td>
+                          <td className={`px-4 py-2 text-right font-mono ${fila.clase}`}>
+                            {Number(fila.votos || 0).toLocaleString()}
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-gray-600">
+                            {fila.sobreValidos === null ? '—' : `${Number(fila.sobreValidos).toFixed(2)}%`}
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-gray-600">
+                            {`${Number(fila.sobreEmitidos || 0).toFixed(2)}%`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tfoot>
+                  )}
                 </table>
               </div>
             </Card>
