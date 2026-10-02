@@ -72,7 +72,7 @@ Parameters:
   DbInstanceClass:
     Type: String
     Default: db.t4g.medium
-    AllowedValues: [db.t4g.small, db.t4g.medium, db.t4g.large, db.m7g.large, db.r7g.large]
+    AllowedValues: [db.t4g.small, db.t4g.medium, db.t4g.large, db.t3.small, db.t3.medium, db.t3.large, db.m6i.large, db.m7g.large, db.r7g.large]
   DbEngineVersion:
     Type: String
     Default: '16'
@@ -177,6 +177,38 @@ Resources:
       AvailabilityZone: !Select [1, !GetAZs '']
       Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-privada-b' }]
 
+  PrivateSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.160.0/20
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-privada-c' }]
+
+  PrivateSubnetD:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.176.0/20
+      AvailabilityZone: !Select [3, !GetAZs '']
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-privada-d' }]
+
+  PrivateSubnetE:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.192.0/20
+      AvailabilityZone: !Select [4, !GetAZs '']
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-privada-e' }]
+
+  PrivateSubnetF:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.208.0/20
+      AvailabilityZone: !Select [5, !GetAZs '']
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-privada-f' }]
+
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -220,6 +252,30 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetCRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetC
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetDRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetD
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetERoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetE
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetFRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetF
       RouteTableId: !Ref PrivateRouteTable
 
   # Trafico a S3 (actas, paquetes, repos de Amazon Linux) sin pasar por internet. Gratis.
@@ -506,7 +562,13 @@ Resources:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
       DBSubnetGroupDescription: Subredes privadas de la base de datos
-      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+        - !Ref PrivateSubnetC
+        - !Ref PrivateSubnetD
+        - !Ref PrivateSubnetE
+        - !Ref PrivateSubnetF
 
   # Al borrar la pila queda una instantanea final (se puede restaurar o borrar).
   DbInstance:
@@ -542,7 +604,13 @@ Resources:
     Type: AWS::ElastiCache::SubnetGroup
     Properties:
       Description: Subredes privadas de Redis
-      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+        - !Ref PrivateSubnetC
+        - !Ref PrivateSubnetD
+        - !Ref PrivateSubnetE
+        - !Ref PrivateSubnetF
 
   # Cache del dashboard + pub/sub de Socket.io entre servidores.
   RedisReplicationGroup:
