@@ -6,6 +6,7 @@ import Card from '../../components/ui/Card';
 import Spinner from '../../components/ui/Spinner';
 import Button from '../../components/ui/Button';
 import { CheckCircle, Clock, AlertTriangle, Send } from 'lucide-react';
+import { escucharEnVivo } from '../../utils/refrescoAgrupado';
 
 const EstadoResultadoPage = () => {
   const [data, setData] = useState(null);
@@ -26,14 +27,7 @@ const EstadoResultadoPage = () => {
 
   useEffect(() => {
     fetchEstado();
-    if (socket) {
-      socket.on('resultado:verificado', fetchEstado);
-      socket.on('resultado:observado', fetchEstado);
-      return () => {
-        socket.off('resultado:verificado');
-        socket.off('resultado:observado');
-      };
-    }
+    return escucharEnVivo(socket, ['resultado:verificado', 'resultado:observado', 'resultado:eliminado'], fetchEstado, 1000);
   }, [socket]);
 
   if (loading) return <div className="flex justify-center mt-20"><Spinner text="Consultando estado..." /></div>;

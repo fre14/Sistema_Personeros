@@ -91,10 +91,13 @@ npm run test:unit
 # Ejecutar pruebas de integración HTTP (60 endpoints y flujos)
 npm run test:integration
 
-# Pruebas de carga (k6)
-npm run carga:humo       # prueba de humo rápida
-npm run carga:jornada    # simulación de jornada completa 850 usuarios
+# Pruebas de carga (k6), contra un backend con usuarios de prueba
+# (PRUEBA_PASSWORD=... PRUEBA_SALIDA=__tests__/load/datos-prueba.json node scripts/generar-datos-prueba.js)
+npm run carga:humo -- -e BASE_URL=http://localhost:3000 -e PASS_PRUEBA=...
 ```
+
+En AWS la prueba completa de la jornada se corre con `bash aws/prueba-carga.sh`
+(ver `docs/GUIA_DESPLIEGUE_AWS.md`, sección 6).
 
 ### Métricas de Cobertura
 - **Declaraciones (Statements):** 99.92%

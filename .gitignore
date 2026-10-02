@@ -39,8 +39,10 @@ Thumbs.db
 .vscode/*
 !.vscode/settings.json
 
-# Resultados de pruebas de carga
+# Resultados y datos de pruebas de carga
 resumen-carga.json
+resultado-jornada.*
+backend/__tests__/load/datos-prueba.json
 
 # Configuracion local del despliegue en AWS
 aws/config.env

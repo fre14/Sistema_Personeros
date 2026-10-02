@@ -19,6 +19,7 @@ const notifyPersonero = jest.fn();
 const uploadActaImage = jest.fn();
 const getActaUrl = jest.fn();
 const invalidateDashboard = jest.fn().mockResolvedValue(undefined);
+const deleteActaImage = jest.fn();
 
 jest.unstable_mockModule('../../../src/config/database.js', () => ({ default: mockDb.db }));
 jest.unstable_mockModule('../../../src/services/auditoria.service.js', () => ({ registrarAuditoria }));
@@ -27,7 +28,7 @@ jest.unstable_mockModule('../../../src/services/websocket.service.js', () => ({
   getIo: jest.fn(), setupWebSocket: jest.fn(),
 }));
 jest.unstable_mockModule('../../../src/services/storage.service.js', () => ({
-  uploadActaImage, getActaUrl, deleteActaImage: jest.fn(),
+  uploadActaImage, getActaUrl, deleteActaImage,
 }));
 jest.unstable_mockModule('../../../src/services/cache.service.js', () => ({
   invalidateDashboard, cacheGet: jest.fn(), cacheSet: jest.fn(), cacheWrap: jest.fn(),
@@ -182,6 +183,49 @@ describe('subirResultado — validacion de entrada', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// Doble toque en "Enviar" o reintento por red movil lenta: dos peticiones
+// de la misma mesa llegan casi juntas. Sin candado la segunda chocaba con el
+// indice unico y respondia 500; ahora espera y recibe un 409 claro.
+describe('subirResultado — envios simultaneos de la misma mesa', () => {
+  it('bloquea la fila de la mesa dentro de la transaccion', async () => {
+    encolarValidacionesOk();
+    mockDb.queue('resultados_mesa', [{ id: 500 }]);
+    const req = crearReq({ user: usuarioPersonero(), body: BODY_OK, file: ARCHIVO });
+    const res = crearRes();
+
+    await subirResultado(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(mockDb.db.raw).toHaveBeenCalledWith(expect.stringMatching(/FOR UPDATE/), [9]);
+  });
+
+  it('si otra sesion acaba de reportar la mesa responde 409 y no crea otra acta', async () => {
+    encolarValidacionesOk();
+    mockDb.db.raw.mockReturnValueOnce({ rows: [{ estado: 'reportada', estado_distrital: null }] });
+    const req = crearReq({ user: usuarioPersonero(), body: BODY_OK, file: ARCHIVO });
+    const res = crearRes();
+
+    await subirResultado(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(mockDb.calls('resultados_mesa').inserts).toHaveLength(0);
+    expect(invalidateDashboard).not.toHaveBeenCalled();
+  });
+
+  it('borra la foto recien subida si el acta no llego a guardarse', async () => {
+    encolarValidacionesOk();
+    mockDb.db.raw.mockReturnValueOnce({ rows: [{ estado: 'verificada', estado_distrital: null }] });
+    const req = crearReq({ user: usuarioPersonero(), body: BODY_OK, file: ARCHIVO });
+    const res = crearRes();
+
+    await subirResultado(req, res);
+    await new Promise((r) => setImmediate(r));
+
+    expect(deleteActaImage).toHaveBeenCalledWith('actas/045821/foto.jpg');
+  });
+});
+
 describe('subirResultado — control de acceso y estado de la mesa', () => {
   it('rechaza si el personero no esta asignado a la mesa', async () => {
     mockDb.queue('asignacion_personeros', undefined);
@@ -721,6 +765,62 @@ describe('verificarResultado', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// Coordinador y personero actuando sobre la misma acta en el mismo instante.
+describe('verificar / observar — cambios concurrentes', () => {
+  const encolarActa = () => {
+    mockDb.queue('resultados_mesa', { id: 500, estado: 'observado', version: 1, mesa_id: 9, personero_id: 3 });
+    mockDb.queue('mesas_sufragio', MESA_PENDIENTE);
+  };
+
+  it('no verifica una version que el coordinador no reviso (llego una correccion)', async () => {
+    encolarActa();
+    mockDb.db.raw
+      .mockReturnValueOnce({ rows: [{ id: 9 }] })
+      .mockReturnValueOnce({ rows: [{ estado: 'pendiente', version: 2 }] });
+    const req = crearReq({ user: usuarioAdmin(), params: { id: '500' } });
+    const res = crearRes();
+
+    await verificarResultado(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.body.message).toMatch(/correccion/i);
+    expect(mockDb.calls('resultados_mesa').updates).toHaveLength(0);
+  });
+
+  it('no observa un acta que otra sesion acaba de verificar', async () => {
+    mockDb.queue('resultados_mesa', { id: 500, estado: 'pendiente', version: 1, mesa_id: 9, personero_id: 3 });
+    mockDb.queue('mesas_sufragio', MESA_PENDIENTE);
+    mockDb.db.raw
+      .mockReturnValueOnce({ rows: [{ id: 9 }] })
+      .mockReturnValueOnce({ rows: [{ estado: 'verificado', version: 1 }] });
+    const req = crearReq({
+      user: usuarioAdmin(), params: { id: '500' },
+      body: { observaciones_coordinador: 'no se lee' },
+    });
+    const res = crearRes();
+
+    await observarResultado(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(mockDb.calls('resultados_mesa').updates).toHaveLength(0);
+  });
+
+  it('bloquea primero la mesa y despues el acta (mismo orden que la subida)', async () => {
+    encolarActa();
+    mockDb.queue('resultados_mesa', 1);
+    mockDb.queue('mesas_sufragio', 1);
+    const req = crearReq({ user: usuarioAdmin(), params: { id: '500' } });
+    const res = crearRes();
+
+    await verificarResultado(req, res);
+
+    const sentencias = mockDb.db.raw.mock.calls.map(([sql]) => sql);
+    expect(sentencias[0]).toMatch(/FROM mesas_sufragio .*FOR UPDATE/);
+    expect(sentencias[1]).toMatch(/FROM resultados_mesa .*FOR UPDATE/);
+    expect(res.status).not.toHaveBeenCalledWith(409);
+  });
+});
+
 describe('observarResultado', () => {
   it.each([
     ['sin motivo', {}],

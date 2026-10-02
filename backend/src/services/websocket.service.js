@@ -68,32 +68,10 @@ export const setupWebSocket = async (server, allowedOrigins = []) => {
   io.on('connection', async (socket) => {
     const { id, rol } = socket.user;
 
-    try {
-      const sockets = await io.in(`user:${id}`).fetchSockets();
-      if (sockets.length >= MAX_SOCKETS_POR_USUARIO) {
-        const sobrante = sockets.slice(0, sockets.length - MAX_SOCKETS_POR_USUARIO + 1);
-        sobrante.forEach((s) => s.disconnect(true));
-      }
-    } catch {}
-
-    socket.join(`user:${id}`);
-
-    if (rol === 'admin') {
-      socket.join('admin:dashboard');
-    } else if (rol === 'personero') {
-      socket.join(`personero:${id}`);
-    } else if (rol === 'coordinador') {
-      socket.join('coordinador:todos');
-      try {
-        const locales = await db('asignacion_coordinadores')
-          .where({ usuario_id: id, activo: true })
-          .pluck('local_id');
-        locales.forEach((localId) => socket.join(`local:${localId}`));
-      } catch (err) {
-        console.error('Error al suscribir coordinador a sus locales:', err.message);
-      }
-    }
-
+    // Los manejadores y las salas que no dependen de nada se registran ANTES
+    // de cualquier await. Con el adapter de Redis, fetchSockets() tarda una
+    // ida y vuelta a Redis, y un evento que el cliente emitiera apenas
+    // conectado (o una notificacion dirigida a su sala) se perdia en ese lapso.
     socket.on('join_local', async (localId) => {
       if (rol === 'admin') return socket.join(`local:${localId}`);
       if (rol !== 'coordinador') return;
@@ -110,6 +88,37 @@ export const setupWebSocket = async (server, allowedOrigins = []) => {
     socket.on('ping_estado', (cb) => {
       if (typeof cb === 'function') cb({ ok: true, ts: Date.now() });
     });
+
+    if (rol === 'admin') {
+      socket.join('admin:dashboard');
+    } else if (rol === 'personero') {
+      socket.join(`personero:${id}`);
+    } else if (rol === 'coordinador') {
+      socket.join('coordinador:todos');
+    }
+
+    // El conteo se hace antes de unir este socket a la sala personal, asi
+    // los sockets que se cuentan son solo los anteriores del mismo usuario.
+    try {
+      const sockets = await io.in(`user:${id}`).fetchSockets();
+      if (sockets.length >= MAX_SOCKETS_POR_USUARIO) {
+        const sobrante = sockets.slice(0, sockets.length - MAX_SOCKETS_POR_USUARIO + 1);
+        sobrante.forEach((s) => s.disconnect(true));
+      }
+    } catch {}
+
+    socket.join(`user:${id}`);
+
+    if (rol === 'coordinador') {
+      try {
+        const locales = await db('asignacion_coordinadores')
+          .where({ usuario_id: id, activo: true })
+          .pluck('local_id');
+        locales.forEach((localId) => socket.join(`local:${localId}`));
+      } catch (err) {
+        console.error('Error al suscribir coordinador a sus locales:', err.message);
+      }
+    }
   });
 
   return io;

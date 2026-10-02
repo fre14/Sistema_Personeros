@@ -19,6 +19,7 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend 
 } from 'recharts';
 import { exportarGraficoComoImagen } from '../../utils/exportImage';
+import { escucharEnVivo } from '../../utils/refrescoAgrupado';
 
 const COLORES_PALETA = [
   '#dc2626', // Rojo
@@ -102,22 +103,12 @@ const ResultadosAdminPage = () => {
 
   // Sincronización en tiempo real vía Socket.io
   useEffect(() => {
-    if (socket) {
-      const handleRealtimeUpdate = () => {
-        fetchEstadisticas();
-        fetchMesas();
-      };
-
-      socket.on('resultado:nuevo', handleRealtimeUpdate);
-      socket.on('resultado:verificado', handleRealtimeUpdate);
-      socket.on('resultado:observado', handleRealtimeUpdate);
-
-      return () => {
-        socket.off('resultado:nuevo', handleRealtimeUpdate);
-        socket.off('resultado:verificado', handleRealtimeUpdate);
-        socket.off('resultado:observado', handleRealtimeUpdate);
-      };
-    }
+    const handleRealtimeUpdate = () => {
+      fetchEstadisticas();
+      fetchMesas();
+    };
+    // Avisos en vivo agrupados: como mucho una recarga cada 3 s en la hora pico.
+    return escucharEnVivo(socket, ['resultado:nuevo', 'resultado:verificado', 'resultado:observado', 'resultado:eliminado'], handleRealtimeUpdate, 3000);
   }, [socket, tipoEleccion, filtroDistrito, filtroLocal, page, searchTerm, selectedDistrito, selectedLocal, selectedEstado]);
 
   const fetchCatalogos = async () => {

@@ -6,6 +6,7 @@ import Card from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import { MapPin, Users, CheckCircle2, AlertCircle } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
+import { escucharEnVivo } from '../../utils/refrescoAgrupado';
 
 const MisLocalesPage = () => {
   const [locales, setLocales] = useState([]);
@@ -27,16 +28,7 @@ const MisLocalesPage = () => {
 
   useEffect(() => {
     fetchLocales();
-    if (socket) {
-      socket.on('resultado:nuevo', fetchLocales);
-      socket.on('resultado:verificado', fetchLocales);
-      socket.on('resultado:observado', fetchLocales);
-      return () => {
-        socket.off('resultado:nuevo');
-        socket.off('resultado:verificado');
-        socket.off('resultado:observado');
-      };
-    }
+    return escucharEnVivo(socket, ['resultado:nuevo', 'resultado:verificado', 'resultado:observado', 'resultado:eliminado'], fetchLocales, 1500);
   }, [socket]);
 
   if (loading) return <div className="flex justify-center p-8"><Spinner /></div>;

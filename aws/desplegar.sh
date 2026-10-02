@@ -208,6 +208,19 @@ fi
 
 # ── 4. Infraestructura (CloudFormation) ────────────────────────────────
 titulo "4/7 Infraestructura"
+# Dominio propio: solo si el certificado ya esta emitido. Con uno pendiente,
+# CloudFront rechaza el alias y TODO el despliegue se revierte.
+if [ -n "${DOMINIO:-}" ] || [ -n "${CERTIFICADO_ACM:-}" ]; then
+  EST_CERT=$(aws acm describe-certificate --region us-east-1 --certificate-arn "${CERTIFICADO_ACM:-x}" \
+    --query Certificate.Status --output text 2>/dev/null || echo NO_ENCONTRADO)
+  if [ -z "${DOMINIO:-}" ] || [ "$EST_CERT" != "ISSUED" ]; then
+    aviso "El dominio no se configura en este despliegue (certificado: $EST_CERT)."
+    aviso "Cuando el certificado figure como Emitido (ISSUED) en ACM, vuelva a ejecutar: bash aws/desplegar.sh"
+    DOMINIO=""; CERTIFICADO_ACM=""
+  else
+    ok "Certificado de $DOMINIO emitido: se configura el dominio."
+  fi
+fi
 PARAMS=(
   "ArtifactsBucket=$BUCKET"
   "ArtifactKey=$APP_KEY"
@@ -305,6 +318,30 @@ aws s3 cp "$WEB_DIR/index.html" "s3://$SITE_BUCKET/index.html" \
 aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths '/index.html' '/' >/dev/null
 ok "Frontend publicado"
 
+# Registros del dominio en Route 53 (si la zona esta en esta cuenta).
+if [ -n "${DOMINIO:-}" ]; then
+  ZONA=""
+  NOMBRE=$DOMINIO
+  while [ -z "$ZONA" ] && [[ "$NOMBRE" == *.* ]]; do
+    ZONA=$(aws route53 list-hosted-zones-by-name --dns-name "$NOMBRE" \
+      --query "HostedZones[?Name=='$NOMBRE.' && Config.PrivateZone==\`false\`].Id | [0]" --output text 2>/dev/null || true)
+    [ "$ZONA" = "None" ] && ZONA=""
+    NOMBRE=${NOMBRE#*.}
+  done
+  if [ -n "$ZONA" ]; then
+    CAMBIOS=$(jq -cn --arg d "$DOMINIO." --arg cf "$(salida CloudFrontDomain)." \
+      '{Comment: "electoral: dominio -> CloudFront", Changes: [("A","AAAA") as $t | {Action: "UPSERT",
+        ResourceRecordSet: {Name: $d, Type: $t, AliasTarget: {HostedZoneId: "Z2FDTNDATAQYW2", DNSName: $cf, EvaluateTargetHealth: false}}}]}')
+    if aws route53 change-resource-record-sets --hosted-zone-id "${ZONA##*/}" --change-batch "$CAMBIOS" >/dev/null; then
+      ok "Route 53: $DOMINIO apunta a CloudFront (la propagacion tarda unos minutos)"
+    else
+      aviso "No se pudieron crear los registros de $DOMINIO en Route 53; creelos a mano (A y AAAA, alias a CloudFront)."
+    fi
+  else
+    aviso "No hay zona de Route 53 para $DOMINIO en esta cuenta: cree registros A/AAAA alias a $(salida CloudFrontDomain)."
+  fi
+fi
+
 # ── 6. Base de datos ───────────────────────────────────────────────────
 titulo "6/7 Base de datos"
 ejecutar_en_servidor "bash /opt/electoral/app/aws/instancia/inicializar-bd.sh" 900
@@ -358,7 +395,12 @@ cat <<EOF
     bash aws/escalar.sh <min> <max>          cambiar numero de servidores
     bash aws/importar-respaldo.sh <archivo>  cargar su base de datos actual
     bash aws/respaldar.sh                    respaldo de la base a S3
+    bash aws/prueba-carga.sh preparar        prueba de carga de la jornada completa
+    bash aws/verificar-actas.sh              revisa que las actas guardadas cuadren
     bash aws/pausar.sh / reanudar.sh         apagar servidores y base entre fechas
     bash aws/eliminar.sh                     baja total al terminar la eleccion
 EOF
+if [ -f "$HOME/.electoral-prueba-carga-$STACK" ]; then
+  aviso "Hay una prueba de carga preparada. Al terminar de probar: bash aws/prueba-carga.sh deshacer"
+fi
 [ "$FALLOS" -eq 0 ] || { error "$FALLOS verificaciones fallaron: revise 'bash aws/estado.sh'."; exit 1; }

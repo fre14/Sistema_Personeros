@@ -224,6 +224,30 @@ describe('cache.service', () => {
       expect(redisFake.del).toHaveBeenCalledWith(['cache:dashboard:b']);
     });
 
+    // node-redis 4 (la version instalada) devuelve el cursor como numero.
+    // Con la comparacion antigua contra '0' este caso no terminaba nunca.
+    it('termina cuando Redis devuelve el cursor como numero (node-redis 4)', async () => {
+      redisFake.scan
+        .mockResolvedValueOnce({ cursor: 17, keys: ['cache:dashboard:a'] })
+        .mockResolvedValueOnce({ cursor: 0, keys: [] })
+        // Red de seguridad: si el bucle siguiera, la 3.a llamada lo cortaria
+        // y el conteo de llamadas delataria el error.
+        .mockResolvedValue({ cursor: 0, keys: [] });
+
+      await invalidateDashboard();
+
+      expect(redisFake.scan).toHaveBeenCalledTimes(2);
+      expect(redisFake.scan).toHaveBeenNthCalledWith(2, '17', expect.any(Object));
+    });
+
+    it('no gira para siempre si Redis responde algo inesperado', async () => {
+      redisFake.scan.mockResolvedValue({ cursor: 'x', keys: [] });
+
+      await invalidateDashboard();
+
+      expect(redisFake.scan).toHaveBeenCalledTimes(1);
+    });
+
     it('no llama a del si el scan no devuelve claves', async () => {
       redisFake.scan.mockResolvedValue({ cursor: '0', keys: [] });
 

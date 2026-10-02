@@ -316,6 +316,27 @@ describe('setupWebSocket — limite de sockets por usuario', () => {
 
     expect(socket.join).toHaveBeenCalledWith('user:3');
   });
+
+  // Con el adapter de Redis el conteo tarda una ida y vuelta: mientras tanto
+  // el socket ya debe escuchar eventos y estar en la sala de su rol.
+  it('registra eventos y sala del rol antes de esperar al adapter', async () => {
+    await setupWebSocket({}, []);
+    let liberar;
+    ioFake.in.mockReturnValueOnce({
+      fetchSockets: jest.fn(() => new Promise((r) => { liberar = () => r([]); })),
+    });
+
+    const socket = crearSocket({ id: 3, rol: 'personero' });
+    const conexion = manejadores.get('connection')(socket);
+
+    expect(socket.tieneManejador('ping_estado')).toBe(true);
+    expect(socket.join).toHaveBeenCalledWith('personero:3');
+    expect(socket.join).not.toHaveBeenCalledWith('user:3');
+
+    liberar();
+    await conexion;
+    expect(socket.join).toHaveBeenCalledWith('user:3');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════

@@ -25,7 +25,7 @@
     "test:cov": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage --forceExit",
     "test:ci": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage --forceExit --ci --runInBand",
     "carga:humo": "k6 run -e PERFIL=humo __tests__/load/escenario-jornada-completa.js",
-    "carga:rampa": "k6 run -e PERFIL=rampa __tests__/load/escenario-jornada-completa.js",
+    "carga:ensayo": "k6 run -e PERFIL=ensayo __tests__/load/escenario-jornada-completa.js",
     "carga:jornada": "k6 run -e PERFIL=jornada __tests__/load/escenario-jornada-completa.js",
     "carga:estres": "k6 run -e PERFIL=estres __tests__/load/escenario-jornada-completa.js"
   },

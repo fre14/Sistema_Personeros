@@ -35,6 +35,19 @@ if SALUD=$(curl -fsS -m 20 "$URL/api/health/full"); then
 else
   aviso "La API no responde (¿pila pausada?)."
 fi
+if PROG=$(aws scheduler get-schedule --name "$STACK-encender-base" \
+    --query ScheduleExpression --output text 2>/dev/null); then
+  echo
+  aviso "SISTEMA EN PAUSA con encendido programado: $PROG (hora de Lima). Encender antes: bash aws/reanudar.sh"
+elif [ "$(parametro_pila MinInstances)" = "0" ]; then
+  echo
+  aviso "SISTEMA EN PAUSA (sin encendido programado). Para encender: bash aws/reanudar.sh"
+fi
+if [ -f "$HOME/.electoral-prueba-carga-$STACK" ]; then
+  echo
+  aviso "HAY UNA PRUEBA DE CARGA PREPARADA: existen usuarios de prueba y limites por IP altos."
+  aviso "Cuando termine de probar:  bash aws/prueba-carga.sh deshacer"
+fi
 echo
 echo "  Panel de monitoreo: $(salida DashboardUrl)"
 echo "  Logs del backend:   CloudWatch > Log groups > $(salida AppLogGroupName)"

@@ -55,6 +55,26 @@ const obtenerDistritoMesa = async (mesaId) => {
   return info;
 };
 
+// Dentro de una transaccion: bloquea la mesa (siempre primero la mesa, luego el
+// acta, en el mismo orden que subirResultado, para no provocar interbloqueos) y
+// relee el acta. Si otra sesion la cambio en el instante previo, se avisa en
+// vez de pisar el cambio.
+const bloquearYReleerActa = async (trx, mesaId, resultado) => {
+  await trx.raw('SELECT id FROM mesas_sufragio WHERE id = ? FOR UPDATE', [mesaId]);
+  const lectura = await trx.raw(
+    'SELECT estado, version FROM resultados_mesa WHERE id = ? FOR UPDATE',
+    [resultado.id],
+  );
+  const actual = lectura?.rows?.[0];
+  if (!actual) return;
+  if (Number(actual.version) !== Number(resultado.version)) {
+    throw new ErrorNegocio(409, 'El personero acaba de enviar una correccion de esta acta. Revise la nueva version antes de decidir.');
+  }
+  if (actual.estado !== resultado.estado) {
+    throw new ErrorNegocio(409, `Otra sesion acaba de cambiar esta acta (estado: ${actual.estado}). Recargue la pagina.`);
+  }
+};
+
 export const subirResultado = async (req, res) => {
   try {
     const {
@@ -138,9 +158,11 @@ export const subirResultado = async (req, res) => {
     }
 
     let fotoUrl = anterior?.foto_acta_url || null;
+    let fotoNueva = null;
     if (req.file) {
       const sufijo = tipoEleccion === 'distrital' ? `${mesa.numero_mesa || mesaId}_distrital` : (mesa.numero_mesa || mesaId);
       fotoUrl = await uploadActaImage(req.file.buffer, req.file.mimetype, sufijo);
+      fotoNueva = fotoUrl;
     }
     if (!fotoUrl) {
       throw new ErrorNegocio(400, 'Debe adjuntar la foto del acta');
@@ -164,32 +186,56 @@ export const subirResultado = async (req, res) => {
       updated_at: new Date(),
     };
 
-    const resultado = await db.transaction(async (trx) => {
-      let resultadoId;
+    let resultado;
+    try {
+      resultado = await db.transaction(async (trx) => {
+        // Candado por mesa. Dos envios simultaneos de la misma acta (doble toque
+        // en "Enviar", o el personero que reintenta porque la red movil tarda)
+        // pasaban ambos las comprobaciones de arriba; el indice unico
+        // (mesa, tipo) frenaba al segundo con un error 500 y el personero creia
+        // que su acta no se habia enviado. Con el candado el segundo espera al
+        // primero, aqui ve la mesa ya 'reportada' y recibe un aviso claro (409).
+        const bloqueo = await trx.raw(
+          'SELECT estado, estado_distrital FROM mesas_sufragio WHERE id = ? FOR UPDATE',
+          [mesaId],
+        );
+        const estadoBloqueado = bloqueo?.rows?.[0]?.[campoEstado];
+        if (estadoBloqueado && estadoBloqueado !== 'pendiente' && estadoBloqueado !== 'observada') {
+          throw new ErrorNegocio(409,
+            `El acta ${tipoEleccion} de esta mesa se acaba de enviar desde otra sesion. Revise el estado de su mesa.`);
+        }
 
-      if (anterior) {
-        await trx('resultados_mesa').where({ id: anterior.id }).update(datos);
-        resultadoId = anterior.id;
-        await trx('detalle_resultados').where({ resultado_id: resultadoId }).del();
-      } else {
-        const [fila] = await trx('resultados_mesa').insert(datos).returning('id');
-        resultadoId = fila?.id ?? fila;
-      }
+        let resultadoId;
 
-      await trx('detalle_resultados').insert(
-        listaVotos.map((v) => ({
-          resultado_id: resultadoId,
-          candidato_id: v.candidato_id,
-          votos: v.votos,
-        }))
-      );
+        if (anterior) {
+          await trx('resultados_mesa').where({ id: anterior.id }).update(datos);
+          resultadoId = anterior.id;
+          await trx('detalle_resultados').where({ resultado_id: resultadoId }).del();
+        } else {
+          const [fila] = await trx('resultados_mesa').insert(datos).returning('id');
+          resultadoId = fila?.id ?? fila;
+        }
 
-      const updateEstado = { updated_at: trx.fn.now() };
-      updateEstado[campoEstado] = 'reportada';
-      await trx('mesas_sufragio').where({ id: mesaId }).update(updateEstado);
+        await trx('detalle_resultados').insert(
+          listaVotos.map((v) => ({
+            resultado_id: resultadoId,
+            candidato_id: v.candidato_id,
+            votos: v.votos,
+          }))
+        );
 
-      return { id: resultadoId, ...datos, detalles: listaVotos };
-    });
+        const updateEstado = { updated_at: trx.fn.now() };
+        updateEstado[campoEstado] = 'reportada';
+        await trx('mesas_sufragio').where({ id: mesaId }).update(updateEstado);
+
+        return { id: resultadoId, ...datos, detalles: listaVotos };
+      });
+    } catch (errorTransaccion) {
+      // La foto ya se subio antes de la transaccion: si el acta no se guardo,
+      // se borra para no dejar archivos huerfanos (sin esperar ni fallar).
+      if (fotoNueva) Promise.resolve().then(() => deleteActaImage(fotoNueva)).catch(() => {});
+      throw errorTransaccion;
+    }
 
     await registrarAuditoria({
       tabla: 'resultados_mesa',
@@ -265,6 +311,7 @@ export const verificarResultado = async (req, res) => {
     const nuevoEstado = 'verificada';
 
     await db.transaction(async (trx) => {
+      await bloquearYReleerActa(trx, mesa.id, resultado);
       await trx('resultados_mesa').where({ id }).update({
         estado: 'verificado',
         verificado_por: req.user.id,
@@ -332,6 +379,7 @@ export const observarResultado = async (req, res) => {
     const campoEstado = tipoEleccion === 'distrital' ? 'estado_distrital' : 'estado';
 
     await db.transaction(async (trx) => {
+      await bloquearYReleerActa(trx, mesa.id, resultado);
       await trx('resultados_mesa').where({ id }).update({
         estado: 'observado',
         observaciones_coordinador: motivoTexto,

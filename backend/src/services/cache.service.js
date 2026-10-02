@@ -30,15 +30,26 @@ export const cacheWrap = async (key, ttl, fn) => {
   return value;
 };
 
+// Tope de seguridad: con COUNT 200 alcanza para 200 000 claves, muy por encima
+// de lo que guarda el tablero. Si algo raro pasa, el recorrido termina igual.
+const MAX_VUELTAS_SCAN = 1000;
+
 export const invalidateDashboard = async () => {
   const redis = getRedis();
   if (!redis) return;
   try {
-    let cursor = '0';
+    // node-redis 4 devuelve el cursor de SCAN como NUMERO (0) y la version 5
+    // como texto ('0'). Comparar contra '0' dejaba este bucle girando para
+    // siempre con la version 4: cada acta subida o verificada quedaba colgada
+    // y Redis recibia miles de SCAN por segundo. Se normaliza a numero.
+    let cursor = 0;
+    let vueltas = 0;
     do {
-      const res = await redis.scan(cursor, { MATCH: `${PREFIX}dashboard:*`, COUNT: 200 });
-      cursor = res.cursor;
-      if (res.keys.length) await redis.del(res.keys);
-    } while (cursor !== '0');
+      const res = await redis.scan(String(cursor), { MATCH: `${PREFIX}dashboard:*`, COUNT: 200 });
+      cursor = Number(res?.cursor);
+      const claves = res?.keys || [];
+      if (claves.length) await redis.del(claves);
+      vueltas += 1;
+    } while (Number.isFinite(cursor) && cursor !== 0 && vueltas < MAX_VUELTAS_SCAN);
   } catch {}
 };

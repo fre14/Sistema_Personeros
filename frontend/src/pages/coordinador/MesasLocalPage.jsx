@@ -7,6 +7,7 @@ import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import Button from '../../components/ui/Button';
 import { ArrowLeft, User, Phone, CheckCircle2, Clock, AlertTriangle, FileText } from 'lucide-react';
+import { escucharEnVivo } from '../../utils/refrescoAgrupado';
 
 const MesasLocalPage = () => {
   const { localId } = useParams();
@@ -32,16 +33,7 @@ const MesasLocalPage = () => {
 
   useEffect(() => {
     fetchMesas();
-    if (socket) {
-      socket.on('resultado:nuevo', fetchMesas);
-      socket.on('resultado:verificado', fetchMesas);
-      socket.on('resultado:observado', fetchMesas);
-      return () => {
-        socket.off('resultado:nuevo');
-        socket.off('resultado:verificado');
-        socket.off('resultado:observado');
-      };
-    }
+    return escucharEnVivo(socket, ['resultado:nuevo', 'resultado:verificado', 'resultado:observado', 'resultado:eliminado'], fetchMesas, 1500);
   }, [localId, socket]);
 
   const mesasFiltradas = mesas.filter(m => filtroEstado === 'todas' || m.estado === filtroEstado);

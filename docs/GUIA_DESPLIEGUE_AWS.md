@@ -58,6 +58,10 @@ Nunca tienes que lanzar un EC2 a mano.
 | Redis sin TLS | ElastiCache cifrado no conectaba | `REDIS_TLS=true` usa `rediss://` |
 | Sin manejador de error en pub/sub de Socket.io | Un corte breve de Redis tumbaba todos los servidores | Manejadores añadidos |
 | `changePassword` sin clave actual | Un token robado bastaba para cambiar la clave | Clave actual obligatoria |
+| La limpieza del caché del tablero comparaba el cursor de Redis con texto, y Redis 4 lo entrega como número | **La primera acta subida se quedaba colgada** y el servidor saturaba Redis con miles de consultas por segundo; igual al verificar u observar | Se compara como número, con un tope de vueltas. Lo detectó la prueba de carga con Redis encendido |
+| Dos envíos simultáneos de la misma acta (doble toque, reintento en red móvil) | El segundo chocaba con el índice único y respondía error 500: el personero creía que su acta no había llegado | Candado por mesa: el segundo espera y recibe un aviso claro (409). Verificar y observar también releen el acta antes de cambiarla |
+| El socket registraba sus eventos después de consultar Redis | Un aviso enviado justo al conectar se perdía | Primero se registran eventos y salas, después se consulta |
+| El tablero recargaba todo con **cada** aviso en vivo | En la hora pico, cientos de peticiones por minuto por pantalla: el propio límite por IP (429) congelaba el tablero del administrador | Los avisos se agrupan: como mucho una recarga cada 3 s (1,5 s para coordinadores) |
 
 Todo el código modificado tiene pruebas; `desplegar.sh` corre las pruebas del
 backend y **no despliega si alguna falla**.
@@ -123,6 +127,19 @@ Al terminar verás algo así:
 Esa URL es la que envías a personeros y coordinadores. Cada administrador
 debe cambiar su clave al entrar (menú de usuario → Cambiar contraseña).
 
+**Dominio propio (sistema-electoral.com).** Pide el certificado en ACM, en la
+región **us-east-1**, y valídalo con «Crear registros en Route 53». Cuando
+figure como *Emitido*, agrega a `aws/config.env`:
+
+```bash
+DOMINIO=sistema-electoral.com
+CERTIFICADO_ACM=arn:aws:acm:us-east-1:...:certificate/...
+```
+
+y ejecuta `bash aws/desplegar.sh`. El script conecta el dominio a CloudFront y
+crea solo los registros A y AAAA en Route 53. Si el certificado todavía no
+está emitido, despliega sin dominio y te avisa; no se rompe nada.
+
 ---
 
 ## 5. Tus datos: empezar de cero o traer la base actual
@@ -150,29 +167,76 @@ claves que ya tenían.
 
 ---
 
-## 6. Prueba de carga (recomendado antes del 3 de octubre)
+## 6. Prueba de carga: la jornada completa antes del 4 de octubre
+
+La prueba reproduce el día entero sobre el sistema real de AWS, con usuarios
+de prueba en **todas** las mesas que aún no tienen personero:
+
+- **Mañana:** personeros y coordinadores entran, confirman su mesa y se quedan
+  conectados (WebSocket abierto todo el tiempo).
+- **Tarde:** los personeros suben el acta con foto (~860 KB, el doble de lo que
+  envía el celular). Primero pocos, luego la avalancha, al final los rezagados.
+  Donde hay elección distrital suben dos actas. El 3 % toca «Enviar» dos veces.
+- **Revisión:** los coordinadores (uno cada 12 mesas de su local) reciben el
+  aviso en vivo, abren el acta y la **aprueban u observan** (15 % observadas).
+  El personero recibe el aviso y corrige la observada; la segunda versión
+  todavía puede ser observada (5 %).
+- **Tablero:** 5 administradores de prueba con el tablero abierto, más 20
+  pantallas que lo consultan cada 5-10 s.
+- **Cierre:** cada personero comprueba que el sistema guardó exactamente las
+  cifras que envió, y el resumen cruza lo enviado con lo que muestra el tablero.
+
+La carga sale de un **servidor temporal en AWS** (m7i.xlarge; la prueba
+completa cuesta centavos) que se elimina solo al terminar. Ni CloudShell ni una
+PC tienen el ancho de banda para cientos de fotos simultáneas.
+
+**Requisito:** haber desplegado esta versión (`bash aws/desplegar.sh`) y
+hacerlo **antes de cargar el Excel de personeros** (la prueba usa las mesas sin
+personero). Nunca el 4 de octubre: el script se niega.
 
 ```bash
-bash aws/prueba-carga.sh preparar 800     # respaldo + 800 personeros de prueba + límites por IP altos
+bash aws/prueba-carga.sh preparar          # respaldo de la base, clave de prueba, límites por IP altos
+bash aws/prueba-carga.sh ejecutar humo     # ~5 min: comprueba que todo el circuito funciona
+bash aws/prueba-carga.sh ejecutar jornada  # ~35 min: la jornada completa (la que cuenta)
+bash aws/prueba-carga.sh deshacer          # SIEMPRE al final: todo vuelve a como estaba
 ```
 
-Desde tu PC (con [k6](https://k6.io) instalado), en la carpeta `backend/`,
-ejecuta el comando que imprime el script:
+| Perfil | Duración | Qué simula |
+|---|---|---|
+| `humo` | ~5 min | 12 personeros. Solo verifica que el circuito completo funciona |
+| `ensayo` | ~12 min | 200 personeros |
+| `jornada` | ~35 min | Todas las mesas. La tarde en 15 minutos de subidas: unas **6 veces** el ritmo real. Sube a 4 servidores como el 4/10 |
+| `estres` | ~15 min | Todas las mesas subiendo en 4 minutos (~20 veces el ritmo real). Busca el límite; no es criterio de aprobación |
 
-```bash
-k6 run -e BASE_URL=https://dxxxx.cloudfront.net -e PASS_ADMIN='<clave admin>' \
-  __tests__/load/escenario-800-usuarios.js
-```
+**Mientras corre**, entra al sistema con tu usuario administrador y mira el
+tablero de resultados: verás llegar las actas de prueba en vivo. En CloudShell
+aparece el avance cada 30 s y en el panel de CloudWatch verás la CPU, las
+conexiones y, si hace falta, cómo se suman servidores. Puedes cerrar CloudShell:
+la prueba sigue en AWS y `bash aws/prueba-carga.sh resultado` la retoma.
 
-k6 sale desde una sola IP; por eso `preparar` sube temporalmente los límites
-por IP (si no, casi todo sería rechazado y la prueba mediría el limitador, no
-la capacidad). Mientras corre, mira el panel de CloudWatch: deberías ver subir
-los servidores.
-Al terminar:
+**Cómo leer el resultado.** Al final se imprime un informe con CUMPLE / NO
+CUMPLE por punto y un veredicto:
 
-```bash
-bash aws/prueba-carga.sh deshacer         # la base y los límites vuelven EXACTOS a como estaban
-```
+| Punto | Criterio de aprobación |
+|---|---|
+| Subida del acta | 95 % en menos de 5 s y menos de 1 % de errores |
+| Doble toque en «Enviar» | Ninguna acta duplicada |
+| Revisión del coordinador | Aviso al coordinador en menos de 5 s; aprobar/observar en menos de 2 s |
+| Aviso al personero | Más del 95 % llega por el socket (prueba el tiempo real entre servidores) |
+| Tablero en vivo | Una acta nueva aparece en menos de 8 s (95 %) |
+| Integridad | Actas y votos aprobados = lo que muestra el tablero; ninguna acta con cifras distintas a las enviadas |
+
+Después revisa la base con las mismas comprobaciones de la noche de la
+elección (duplicados, sumas, estados, fotos). Los resultados quedan en
+`~/pruebas-carga/`. «Rechazadas por regla» no son fallas: son el segundo envío
+del doble toque.
+
+`deshacer` borra los usuarios, actas y fotos de prueba, devuelve las mesas a
+«pendiente», los límites por IP y el número de servidores. Lo demás de la base
+no se toca: si entre la prueba y el `deshacer` cargaste el Excel, se conserva.
+Mientras no lo ejecutes, `estado.sh` y `desplegar.sh` te lo recuerdan. Solo en
+una emergencia, `deshacer --restaurar-respaldo` devuelve la base ENTERA al
+respaldo tomado en `preparar` (se pierde todo lo hecho después).
 
 ---
 
@@ -185,8 +249,10 @@ bash aws/prueba-carga.sh deshacer         # la base y los límites vuelven EXACT
 | `bash aws/escalar.sh 2` | Vuelve a 2 |
 | `bash aws/ajustar-app.sh RATE_LIMIT_AUTH=150` | Cambia una variable del backend en todos los servidores sin redesplegar (reinicia de a uno, ~3 s cada uno). `--ver` muestra los ajustes, `--reset` los quita |
 | `bash aws/respaldar.sh` | Respaldo de la base a S3 y copia en `~/respaldos/` |
-| `bash aws/pausar.sh` | Apaga servidores y base (la URL y los datos se conservan) |
-| `bash aws/reanudar.sh` | Enciende base y servidores |
+| `bash aws/verificar-actas.sh` | Revisa que las actas guardadas cuadren (duplicados, sumas, estados, fotos). No modifica nada; úsalo la noche de la elección antes de publicar |
+| `bash aws/pausar.sh` | Respalda la base, apaga servidores y detiene la base. Se conservan datos, dominio, balanceador y caché. Deja programado un encendido de seguridad el 4/10 a las 04:30 |
+| `bash aws/pausar.sh 2026-10-03 08:00` | Igual, pero se enciende solo en esa fecha y hora de Lima |
+| `bash aws/reanudar.sh` | Enciende base y servidores ya (cancela el encendido programado). También sirve para comprobar el sistema tras un encendido automático |
 | `bash aws/desplegar.sh` | Publica cambios de código: si cambió el backend, reemplaza servidores de a uno sin cortar el servicio |
 | `bash aws/eliminar.sh` | Baja total (ver sección 9) |
 
@@ -206,8 +272,8 @@ bash aws/prueba-carga.sh deshacer         # la base y los límites vuelven EXACT
 | Fecha | Acción |
 |---|---|
 | Hoy | Pedir cupo de vCPU. `desplegar.sh`, importar tu base o cargar datos |
-| Antes del 3/10 | Prueba de carga y `deshacer` |
-| Días libres | `pausar.sh` para ahorrar (la base se enciende sola a los 7 días) |
+| Antes de cargar el Excel | Prueba de carga (`humo`, luego `jornada`) y `deshacer` |
+| Días libres | `pausar.sh` para ahorrar, o `pausar.sh 2026-10-03 08:00` para que se encienda solo (AWS enciende sola una base detenida a los 7 días) |
 | 3/10 | `reanudar.sh`, `estado.sh`, prueba con un personero real |
 | 4/10 | Jornada |
 | 5–6/10 | Descarga de actas desde el panel (Descargas) y `respaldar.sh` |
@@ -221,7 +287,8 @@ bash aws/prueba-carga.sh deshacer         # la base y los límites vuelven EXACT
 |---|---|---|
 | Encendido, 2 servidores | ~US$ 0.34 | ~US$ 8 |
 | Pico, 8 servidores | ~US$ 0.65 | — |
-| Pausado | ~US$ 0.10 | ~US$ 2.5 |
+| Pausado (`pausar.sh`) | ~US$ 0.10 | ~US$ 2.5 |
+| Dado de baja (`eliminar.sh`) | — | centavos (respaldo e instantánea) |
 
 Lo más caro es la base Multi-AZ (US$ 0.13/h) y Redis con réplica (US$ 0.064/h).
 CloudFront entra en la capa gratuita (1 TB y 10 millones de peticiones al mes).
@@ -277,13 +344,17 @@ aws/
 ├── config.ejemplo.env         Opciones (copiar a config.env)
 ├── estado.sh · escalar.sh · pausar.sh · reanudar.sh
 ├── ajustar-app.sh             Variables del backend en caliente (p. ej. límites por IP)
-├── respaldar.sh · importar-respaldo.sh · prueba-carga.sh · eliminar.sh
+├── respaldar.sh · importar-respaldo.sh · eliminar.sh
+├── prueba-carga.sh            Prueba de carga de la jornada completa (preparar/ejecutar/deshacer)
+├── generador-carga.sh         Corre dentro del servidor temporal que genera la carga (k6)
+├── verificar-actas.sh         Revisión de integridad de las actas guardadas
 ├── lib.sh                     Funciones comunes
 └── instancia/                 Lo que corre dentro de cada servidor EC2
     ├── arranque.sh            Instala Node, lee secretos, migra y arranca el servicio
     ├── inicializar-bd.sh      Migraciones + datos iniciales si la base está vacía
     ├── migrar-con-candado.mjs Migraciones de a un servidor (candado de PostgreSQL)
     ├── respaldo-bd.sh · restaurar-bd.sh · generar-datos-prueba.sh
+    ├── verificar-integridad.sh/.mjs   Comprobaciones de las actas en la base
     ├── componer-env.sh · aplicar-config.sh   Ajustes de ajustar-app.sh
     └── comun.sh · consulta.mjs · ejecutar-knex.sh
 ```

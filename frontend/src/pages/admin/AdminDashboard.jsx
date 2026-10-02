@@ -6,6 +6,7 @@ import Card from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import { Inbox, CheckCircle, Clock, AlertTriangle, RefreshCw, MapPin } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import { escucharEnVivo } from '../../utils/refrescoAgrupado';
 
 const AdminDashboard = () => {
   const [tipoEleccion, setTipoEleccion] = useState('provincial'); // 'provincial' | 'distrital'
@@ -82,17 +83,8 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     fetchDashboardData();
-
-    if (socket) {
-      socket.on('resultado:nuevo', fetchDashboardData);
-      socket.on('resultado:verificado', fetchDashboardData);
-      socket.on('resultado:observado', fetchDashboardData);
-      return () => {
-        socket.off('resultado:nuevo');
-        socket.off('resultado:verificado');
-        socket.off('resultado:observado');
-      };
-    }
+    // Avisos en vivo agrupados: como mucho una recarga cada 3 s en la hora pico.
+    return escucharEnVivo(socket, ['resultado:nuevo', 'resultado:verificado', 'resultado:observado', 'resultado:eliminado'], fetchDashboardData, 3000);
   }, [socket, tipoEleccion, distritoSeleccionado]);
 
   const pieData = [

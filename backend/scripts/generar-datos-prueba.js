@@ -1,108 +1,201 @@
 /**
- * Genera personeros de prueba y los asigna a mesas, para poder correr la
- * prueba de carga de 800 usuarios contra un entorno de ensayo.
+ * Datos para ensayar la jornada electoral (prueba de carga).
  *
- * Uso:   node scripts/generar-datos-prueba.js [cantidad]
- * Ej:    node scripts/generar-datos-prueba.js 800
+ * Sobre las mesas que todavia NO tienen personero crea:
+ *   - un personero por mesa (hasta la cantidad pedida),
+ *   - coordinadores para cada local con alguna de esas mesas (uno cada 12
+ *     mesas, variable MESAS_POR_COORDINADOR),
+ *   - varios administradores de prueba, que haran de "tablero en vivo".
  *
- * Los usuarios creados tienen DNI 10000001, 10000002, ... y su contrasena
- * es igual a su DNI. Se marcan con el apellido "PRUEBA CARGA" para poder
- * borrarlos despues con:  node scripts/generar-datos-prueba.js --limpiar
+ * Todos comparten la clave de PRUEBA_PASSWORD (obligatoria, 12+ caracteres) y
+ * llevan el apellido "PRUEBA CARGA" para poder borrarlos. Si se indica
+ * PRUEBA_SALIDA, escribe ahi un JSON con los DNI que usa el escenario de k6.
  *
- * NO EJECUTAR EN EL ENTORNO REAL DE LA ELECCION.
+ * Uso:
+ *   PRUEBA_PASSWORD=... node scripts/generar-datos-prueba.js [cantidad] [admins]
+ *   node scripts/generar-datos-prueba.js --limpiar
+ *
+ * Se niega a correr si ya hay actas de personeros reales: es para ensayar
+ * ANTES de la jornada, nunca durante.
  */
 import 'dotenv/config';
+import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import db from '../src/config/database.js';
 
 const MARCA = 'PRUEBA CARGA';
+// Rangos altos para no chocar con DNI reales; si alguno ya existe se salta.
+const BASE_DNI = { personero: 99000000, coordinador: 99100000, admin: 99200000 };
 
-const limpiar = async () => {
-  const ids = await db('usuarios').where({ apellidos: MARCA }).pluck('id');
-  if (!ids.length) {
-    console.log('No hay usuarios de prueba que borrar.');
-    return;
+const log = (...a) => console.log(...a);
+
+const limpiar = async ({ silencioso = false } = {}) => {
+  const resumen = await db.transaction(async (trx) => {
+    const ids = await trx('usuarios').where({ apellidos: MARCA }).pluck('id');
+    if (!ids.length) return { usuarios: 0, actas: 0 };
+
+    const actas = await trx('resultados_mesa')
+      .whereIn('personero_id', ids)
+      .select('id', 'mesa_id', 'tipo_eleccion');
+
+    if (actas.length) {
+      const idsActas = actas.map((a) => a.id);
+      await trx('detalle_resultados').whereIn('resultado_id', idsActas).del();
+      await trx('resultados_mesa').whereIn('id', idsActas).del();
+      const mesasProv = [...new Set(actas.filter((a) => a.tipo_eleccion !== 'distrital').map((a) => a.mesa_id))];
+      const mesasDist = [...new Set(actas.filter((a) => a.tipo_eleccion === 'distrital').map((a) => a.mesa_id))];
+      if (mesasProv.length) {
+        await trx('mesas_sufragio').whereIn('id', mesasProv).update({ estado: 'pendiente', updated_at: trx.fn.now() });
+      }
+      if (mesasDist.length) {
+        await trx('mesas_sufragio').whereIn('id', mesasDist).update({ estado_distrital: 'pendiente', updated_at: trx.fn.now() });
+      }
+    }
+    // Actas de otros que un coordinador de prueba haya verificado (no deberia
+    // haberlas: la generacion se niega si hay actas reales).
+    await trx('resultados_mesa').whereIn('verificado_por', ids).update({ verificado_por: null });
+    await trx('auditoria').whereIn('usuario_id', ids).del();
+    await trx('asignacion_personeros').whereIn('usuario_id', ids).del();
+    await trx('asignacion_coordinadores').whereIn('usuario_id', ids).del();
+    await trx('usuarios').whereIn('id', ids).del();
+    return { usuarios: ids.length, actas: actas.length };
+  });
+  if (!silencioso) {
+    log(resumen.usuarios
+      ? `Eliminados ${resumen.usuarios} usuarios de prueba y ${resumen.actas} actas de prueba.`
+      : 'No hay usuarios de prueba que borrar.');
   }
-  await db('asignacion_personeros').whereIn('usuario_id', ids).del();
-  await db('usuarios').whereIn('id', ids).del();
-  console.log(`Eliminados ${ids.length} usuarios de prueba.`);
+  return resumen;
 };
 
-const generar = async (cantidad) => {
+const generadorDni = (base, ocupados) => {
+  let n = base;
+  return () => {
+    do { n += 1; } while (ocupados.has(String(n)));
+    ocupados.add(String(n));
+    return String(n);
+  };
+};
+
+const insertarUsuarios = async (trx, filas) => {
+  if (!filas.length) return new Map();
+  const creados = await trx('usuarios').insert(filas).returning(['id', 'dni']);
+  return new Map(creados.map((u) => [u.dni, u.id]));
+};
+
+const generar = async (cantidad, cantidadAdmins) => {
   if (process.env.NODE_ENV === 'production' && !process.env.PERMITIR_DATOS_PRUEBA) {
-    console.error('Bloqueado: NODE_ENV=production.');
-    console.error('Si esto es un entorno de ensayo, ejecute con PERMITIR_DATOS_PRUEBA=1');
-    process.exit(1);
+    throw new Error('Bloqueado: NODE_ENV=production. En un ensayo, ejecute con PERMITIR_DATOS_PRUEBA=1');
+  }
+  const clave = process.env.PRUEBA_PASSWORD || '';
+  if (clave.length < 12) {
+    throw new Error('Falta PRUEBA_PASSWORD (12 caracteres o mas): es la clave de los usuarios de prueba.');
   }
 
+  const reales = await db('resultados_mesa as rm')
+    .join('usuarios as u', 'u.id', 'rm.personero_id')
+    .whereNot('u.apellidos', MARCA)
+    .count('rm.id as c')
+    .first();
+  if (Number(reales?.c || 0) > 0) {
+    throw new Error(`Ya hay ${reales.c} actas de personeros reales. La prueba de carga es para antes de la jornada.`);
+  }
+
+  // Idempotente: si quedo una preparacion anterior, se reemplaza.
+  const previo = await limpiar({ silencioso: true });
+  if (previo.usuarios) log(`Se borraron ${previo.usuarios} usuarios de una preparacion anterior.`);
+
+  // Mesas sin NINGUNA fila de asignacion (mesa_id es UNIQUE aunque este inactiva),
+  // ordenadas por local para que un subconjunto cubra locales completos.
   const mesas = await db('mesas_sufragio as m')
-    .leftJoin('asignacion_personeros as ap', function () {
-      this.on('ap.mesa_id', '=', 'm.id').andOn('ap.activo', '=', db.raw('true'));
-    })
+    .join('locales_votacion as l', 'l.id', 'm.local_id')
+    .join('distritos as d', 'd.id', 'l.distrito_id')
+    .leftJoin('asignacion_personeros as ap', 'ap.mesa_id', 'm.id')
     .whereNull('ap.id')
-    .select('m.id')
+    .select('m.id', 'm.local_id', 'd.tiene_eleccion_distrital')
+    .orderBy([{ column: 'm.local_id' }, { column: 'm.numero_mesa' }])
     .limit(cantidad);
 
   if (!mesas.length) {
-    console.log('No hay mesas libres. Primero ejecute: npm run seed');
-    return;
+    throw new Error('No hay mesas sin personero. Haga la prueba antes de cargar el Excel de personeros.');
   }
 
-  console.log(`Creando ${mesas.length} personeros de prueba...`);
-  let creados = 0;
+  log(`Preparando ${mesas.length} personeros, sus coordinadores y ${cantidadAdmins} administradores de prueba...`);
+  const hash = await bcrypt.hash(clave, 10);
+  const ocupados = new Set(await db('usuarios').pluck('dni'));
+  const dniPersonero = generadorDni(BASE_DNI.personero, ocupados);
+  const dniCoordinador = generadorDni(BASE_DNI.coordinador, ocupados);
+  const dniAdmin = generadorDni(BASE_DNI.admin, ocupados);
+  const usuario = (dni, nombres, rol) => ({
+    dni, nombres, apellidos: MARCA, password_hash: hash, rol, activo: true,
+  });
 
-  for (let i = 0; i < mesas.length; i++) {
-    const dni = String(10000001 + i);
-    const hash = await bcrypt.hash(dni, 10);
+  // Un coordinador cada MESAS_POR_COORDINADOR mesas del local (minimo uno):
+  // un local de 48 mesas no lo revisa una sola persona.
+  const mesasPorCoordinador = Math.max(Number(process.env.MESAS_POR_COORDINADOR) || 12, 1);
+  const mesasPorLocal = new Map();
+  mesas.forEach((m) => mesasPorLocal.set(m.local_id, (mesasPorLocal.get(m.local_id) || 0) + 1));
+  const personeros = mesas.map((m, i) => ({ ...usuario(dniPersonero(), `Personero ${i + 1}`, 'personero'), mesa: m }));
+  const coordinadores = [];
+  for (const [localId, total] of mesasPorLocal) {
+    for (let k = 0; k < Math.ceil(total / mesasPorCoordinador); k += 1) {
+      coordinadores.push({
+        ...usuario(dniCoordinador(), `Coordinador ${coordinadores.length + 1}`, 'coordinador'), localId,
+      });
+    }
+  }
+  const admins = Array.from({ length: cantidadAdmins }, (_, k) => usuario(dniAdmin(), `Tablero ${k + 1}`, 'admin'));
 
-    await db.transaction(async (trx) => {
-      const existente = await trx('usuarios').where({ dni }).first();
-      let usuarioId = existente?.id;
+  const sinExtras = ({ mesa, localId, ...fila }) => fila;
 
-      if (!usuarioId) {
-        const [fila] = await trx('usuarios').insert({
-          dni,
-          nombres: `Personero ${i + 1}`,
-          apellidos: MARCA,
-          password_hash: hash,
-          rol: 'personero',
-          activo: true,
-        }).returning('id');
-        usuarioId = fila?.id ?? fila;
-      }
+  await db.transaction(async (trx) => {
+    const idsP = await insertarUsuarios(trx, personeros.map(sinExtras));
+    await trx.batchInsert('asignacion_personeros', personeros.map((p) => ({
+      usuario_id: idsP.get(p.dni), mesa_id: p.mesa.id, activo: true,
+    })), 500);
 
-      const yaAsignado = await trx('asignacion_personeros')
-        .where({ usuario_id: usuarioId, activo: true }).first();
-      if (!yaAsignado) {
-        await trx('asignacion_personeros').insert({
-          usuario_id: usuarioId,
-          mesa_id: mesas[i].id,
-          activo: true,
-        });
-      }
-    });
+    const idsC = await insertarUsuarios(trx, coordinadores.map(sinExtras));
+    await trx.batchInsert('asignacion_coordinadores', coordinadores.map((c) => ({
+      usuario_id: idsC.get(c.dni), local_id: c.localId, activo: true,
+    })), 500);
 
-    creados++;
-    if (creados % 100 === 0) console.log(`  ${creados}/${mesas.length}`);
+    await insertarUsuarios(trx, admins);
+  });
+
+  const conDistrital = personeros.filter((p) => p.mesa.tiene_eleccion_distrital).length;
+  const datos = {
+    version: 1,
+    generado: new Date().toISOString(),
+    personeros: personeros.map((p) => ({ dni: p.dni, local: p.mesa.local_id, distrital: Boolean(p.mesa.tiene_eleccion_distrital) })),
+    coordinadores: coordinadores.map((c) => ({ dni: c.dni, local: c.localId })),
+    admins: admins.map((a) => a.dni),
+  };
+  if (process.env.PRUEBA_SALIDA) {
+    fs.writeFileSync(process.env.PRUEBA_SALIDA, JSON.stringify(datos));
+    log(`Datos para k6 escritos en ${process.env.PRUEBA_SALIDA}`);
   }
 
-  console.log(`\nListo: ${creados} personeros de prueba creados.`);
-  console.log('DNI: 10000001 en adelante. Contrasena: el mismo DNI.');
-  console.log('\nAhora puede ejecutar la prueba de carga:');
-  console.log('  k6 run -e BASE_URL=http://su-servidor tests/load/escenario-800-usuarios.js');
-  console.log('\nPara borrarlos despues:');
-  console.log('  node scripts/generar-datos-prueba.js --limpiar');
+  log(`Listo: ${personeros.length} personeros (${conDistrital} tambien con acta distrital), `
+    + `${coordinadores.length} coordinadores y ${admins.length} administradores de prueba.`);
+  // Linea para los scripts de AWS (no cambiar el formato).
+  log(`RESUMEN_PRUEBA personeros=${personeros.length} coordinadores=${coordinadores.length} `
+    + `admins=${admins.length} actas_distritales=${conDistrital}`);
 };
 
 const main = async () => {
   const arg = process.argv[2];
-  if (arg === '--limpiar') await limpiar();
-  else await generar(Number(arg) || 800);
+  if (arg === '--limpiar') {
+    await limpiar();
+  } else {
+    const cantidad = Number(arg) || 10000;
+    const admins = Math.min(Math.max(Number(process.argv[3]) || 5, 1), 20);
+    await generar(cantidad, admins);
+  }
   await db.destroy();
 };
 
 main().catch(async (err) => {
   console.error('Error:', err.message);
-  await db.destroy();
+  await db.destroy().catch(() => {});
   process.exit(1);
 });
