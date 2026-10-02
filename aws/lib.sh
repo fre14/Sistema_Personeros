@@ -30,7 +30,7 @@ morir()  { error "$*"; exit 1; }
 requiere() {
   local faltan=()
   if ! command -v jq >/dev/null 2>&1 && printf '%s\n' "$@" | grep -qx jq; then
-    sudo dnf install -y -q jq >/dev/null 2>&1 || true
+    (sudo dnf install -y -q jq 2>/dev/null || sudo yum install -y -q jq 2>/dev/null || true)
   fi
   for c in "$@"; do command -v "$c" >/dev/null 2>&1 || faltan+=("$c"); done
   [ ${#faltan[@]} -eq 0 ] || morir "Faltan comandos: ${faltan[*]}"
