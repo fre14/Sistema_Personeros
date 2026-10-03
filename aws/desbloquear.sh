@@ -23,6 +23,6 @@ try {
 
 B64=$(printf "%s" "$JS" | base64 | tr -d '\r\n')
 
-ejecutar_en_servidor "echo '$B64' | base64 -d > /tmp/desbloquear.mjs && source /etc/electoral/app.env && \$(cat /etc/electoral/node_bin) /tmp/desbloquear.mjs" 60
+ejecutar_en_servidor "echo '$B64' | base64 -d > /tmp/desbloquear.mjs && source /opt/electoral/app/aws/instancia/comun.sh && correr_node /tmp/desbloquear.mjs" 60
 
 ok "Listo. Ya puedes recargar el navegador y desasignar."
