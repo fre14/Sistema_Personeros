@@ -14,11 +14,17 @@ export const asignarPersonero = async (req, res) => {
       const existingUser = await trx('asignacion_personeros').where({ usuario_id, activo: true }).first();
       if (existingUser) return res.status(400).json({ success: false, message: 'El personero ya tiene una mesa asignada' });
 
-      const existing = await trx('asignacion_personeros').where({ mesa_id, activo: true }).first();
-      if (existing) return res.status(400).json({ success: false, message: 'Mesa ya tiene personero asignado' });
+      const existing = await trx('asignacion_personeros').where({ mesa_id }).first();
+      if (existing && existing.activo !== false) return res.status(400).json({ success: false, message: 'Mesa ya tiene personero asignado' });
       
-      const [idRes] = await trx('asignacion_personeros').insert({ usuario_id, mesa_id, activo: true }).returning('id');
-      const id = idRes.id || idRes;
+      let id;
+      if (existing) {
+        await trx('asignacion_personeros').where({ id: existing.id }).update({ usuario_id, activo: true, asignado_en: trx.fn.now() });
+        id = existing.id;
+      } else {
+        const [idRes] = await trx('asignacion_personeros').insert({ usuario_id, mesa_id, activo: true }).returning('id');
+        id = idRes.id || idRes;
+      }
       
       await trx('historial_asignaciones').insert({
         tipo: 'personero',
@@ -90,11 +96,17 @@ export const asignarCoordinador = async (req, res) => {
       const local = await trx('locales_votacion as locales').where({ id: local_id }).first();
       if (!local) return res.status(400).json({ success: false, message: 'Local inválido' });
       
-      const existing = await trx('asignacion_coordinadores').where({ usuario_id, local_id, activo: true }).first();
-      if (existing) return res.status(400).json({ success: false, message: 'El coordinador ya está asignado a este local' });
+      const existing = await trx('asignacion_coordinadores').where({ usuario_id, local_id }).first();
+      if (existing && existing.activo !== false) return res.status(400).json({ success: false, message: 'El coordinador ya está asignado a este local' });
 
-      const [idRes] = await trx('asignacion_coordinadores').insert({ usuario_id, local_id, activo: true }).returning('id');
-      const id = idRes.id || idRes;
+      let id;
+      if (existing) {
+        await trx('asignacion_coordinadores').where({ id: existing.id }).update({ activo: true, asignado_en: trx.fn.now() });
+        id = existing.id;
+      } else {
+        const [idRes] = await trx('asignacion_coordinadores').insert({ usuario_id, local_id, activo: true }).returning('id');
+        id = idRes.id || idRes;
+      }
       
       await trx('historial_asignaciones').insert({
         tipo: 'coordinador',
@@ -239,14 +251,25 @@ export const removeAsignacionPersonero = async (req, res) => {
       
       await trx('asignacion_personeros').where({ id }).update({ activo: false });
       
-      await trx('historial_asignaciones').insert({
-        tipo: 'personero',
-        mesa_id: current.mesa_id,
-        usuario_anterior_id: current.usuario_id,
-        usuario_nuevo_id: null,
-        motivo_cambio: 'Eliminación de asignación',
-        cambiado_por: req.user?.id || null
-      });
+      try {
+        await trx('historial_asignaciones').insert({
+          tipo: 'personero',
+          mesa_id: current.mesa_id,
+          usuario_anterior_id: current.usuario_id,
+          usuario_nuevo_id: null,
+          motivo_cambio: 'Eliminación de asignación',
+          cambiado_por: req.user?.id || null
+        });
+      } catch (errHist) {
+        await trx('historial_asignaciones').insert({
+          tipo: 'personero',
+          mesa_id: current.mesa_id,
+          usuario_anterior_id: current.usuario_id,
+          usuario_nuevo_id: current.usuario_id,
+          motivo_cambio: 'Eliminación de asignación',
+          cambiado_por: req.user?.id || null
+        }).catch(e => console.warn('Historial warning:', e.message));
+      }
       
       await registrarAuditoria('asignacion_personeros', 'delete', req.user.id, { id }, { activo: false }, current, trx);
       res.json({ success: true, data: null, message: 'Asignación eliminada' });
@@ -266,14 +289,25 @@ export const removeAsignacionCoordinador = async (req, res) => {
       
       await trx('asignacion_coordinadores').where({ id }).update({ activo: false });
       
-      await trx('historial_asignaciones').insert({
-        tipo: 'coordinador',
-        local_id: current.local_id,
-        usuario_anterior_id: current.usuario_id,
-        usuario_nuevo_id: null,
-        motivo_cambio: 'Eliminación de asignación',
-        cambiado_por: req.user?.id || null
-      });
+      try {
+        await trx('historial_asignaciones').insert({
+          tipo: 'coordinador',
+          local_id: current.local_id,
+          usuario_anterior_id: current.usuario_id,
+          usuario_nuevo_id: null,
+          motivo_cambio: 'Eliminación de asignación',
+          cambiado_por: req.user?.id || null
+        });
+      } catch (errHist) {
+        await trx('historial_asignaciones').insert({
+          tipo: 'coordinador',
+          local_id: current.local_id,
+          usuario_anterior_id: current.usuario_id,
+          usuario_nuevo_id: current.usuario_id,
+          motivo_cambio: 'Eliminación de asignación',
+          cambiado_por: req.user?.id || null
+        }).catch(e => console.warn('Historial warning:', e.message));
+      }
       
       await registrarAuditoria('asignacion_coordinadores', 'delete', req.user.id, { id }, { activo: false }, current, trx);
       res.json({ success: true, data: null, message: 'Asignación eliminada' });
