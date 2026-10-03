@@ -96,9 +96,10 @@ ejecutar_en_servidor() {
     [ "$intento" = 1 ] && echo "Esperando a que el agente SSM de $id este en linea..."
     sleep 10
   done
-  [ "$estado" = "Online" ] || morir "El servidor $id no aparece en Systems Manager."
+  local coment
+  coment=$(echo "${cmd:0:70}" | tr '\r\n' '  ')
   cid=$(aws ssm send-command --instance-ids "$id" --document-name AWS-RunShellScript \
-    --comment "electoral: ${cmd:0:80}" --timeout-seconds "$timeout" \
+    --comment "electoral: $coment" --timeout-seconds "$timeout" \
     --parameters "$(jq -cn --arg c "$cmd" '{commands:[$c], executionTimeout:["'"$timeout"'"]}')" \
     --query Command.CommandId --output text)
   echo "Ejecutando en $id (comando $cid)..."
@@ -127,10 +128,10 @@ ejecutar_en_todos() {
   asg=$(salida AutoScalingGroupName)
   ids=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$asg" \
     --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' --output text)
-  [ -n "$ids" ] && [ "$ids" != "None" ] || morir "No hay servidores en servicio."
-  # shellcheck disable=SC2086
+  local coment
+  coment=$(echo "${cmd:0:70}" | tr '\r\n' '  ')
   cid=$(aws ssm send-command --instance-ids $ids --document-name AWS-RunShellScript \
-    --comment "electoral: ${cmd:0:80}" --max-concurrency 1 --max-errors 0 \
+    --comment "electoral: $coment" --max-concurrency 1 --max-errors 0 \
     --parameters "$(jq -cn --arg c "$cmd" '{commands:[$c]}')" \
     --query Command.CommandId --output text)
   echo "Aplicando en $(echo "$ids" | wc -w) servidores, de a uno (comando $cid)..."
