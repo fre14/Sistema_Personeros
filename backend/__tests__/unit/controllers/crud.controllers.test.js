@@ -141,7 +141,7 @@ describe('usuarios.controller', () => {
 
   describe('create', () => {
     it('hashea la contrasena con coste 12 y nunca la guarda en claro', async () => {
-      mockDb.queue('usuarios', [{ id: 10 }], { id: 10, dni: '12345678' });
+      mockDb.queue('usuarios', undefined, [{ id: 10 }], { id: 10, dni: '12345678' });
       const req = crearReq({
         user: usuarioAdmin(),
         body: { dni: '12345678', nombres: 'Ana', apellidos: 'Perez', rol: 'personero', password: 'secreta123' },
@@ -158,7 +158,7 @@ describe('usuarios.controller', () => {
     });
 
     it('nunca devuelve el hash en la respuesta', async () => {
-      mockDb.queue('usuarios', [{ id: 10 }], { id: 10, dni: '12345678', rol: 'personero' });
+      mockDb.queue('usuarios', undefined, [{ id: 10 }], { id: 10, dni: '12345678', rol: 'personero' });
       const req = crearReq({
         user: usuarioAdmin(),
         body: { dni: '12345678', password: 'x' },
@@ -170,14 +170,16 @@ describe('usuarios.controller', () => {
       expect(res.body.data.password_hash).toBeUndefined();
     });
 
-    it('responde 500 si el DNI ya existe (violacion de unicidad)', async () => {
-      mockDb.queueError('usuarios', new Error('duplicate key value violates unique constraint'));
+    it('responde 409 si el DNI ya existe (violacion de unicidad)', async () => {
+      mockDb.queue('usuarios', { id: 9, dni: '12345678', nombres: 'Juan', apellidos: 'Perez', rol: 'personero' });
       const req = crearReq({ user: usuarioAdmin(), body: { dni: '12345678', password: 'x' } });
       const res = crearRes();
 
       await usuarios.create(req, res);
 
-      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('ya se encuentra registrado');
     });
   });
 

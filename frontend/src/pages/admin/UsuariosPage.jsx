@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { get, post, put, patch, del } from '../../services/api';
 import Card from '../../components/ui/Card';
 import Table from '../../components/ui/Table';
@@ -26,6 +26,12 @@ const UsuariosPage = () => {
   const [password, setPassword] = useState('');
   const [telefono, setTelefono] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Detección de DNI duplicado en tiempo real
+  const existingUserWithDni = useMemo(() => {
+    if (editingId || dni.length !== 8) return null;
+    return usuarios.find(u => u.dni === dni.trim());
+  }, [dni, editingId, usuarios]);
 
   // Bulk State
   const [bulkModal, setBulkModal] = useState({ open: false, rol: '', activo: true, title: '', message: '' });
@@ -84,6 +90,14 @@ const UsuariosPage = () => {
       toast.error('El DNI debe tener exactamente 8 dígitos');
       return;
     }
+    if (!/^\d{8}$/.test(dni)) {
+      toast.error('El DNI debe contener solo números');
+      return;
+    }
+    if (!editingId && existingUserWithDni) {
+      toast.error(`El DNI ${dni} ya está registrado para ${existingUserWithDni.nombres} ${existingUserWithDni.apellidos}`);
+      return;
+    }
     if (!nombres.trim() || !apellidos.trim()) {
       toast.error('Nombres y apellidos son requeridos');
       return;
@@ -122,7 +136,8 @@ const UsuariosPage = () => {
       setModalOpen(false);
       fetchUsuarios();
     } catch (error) {
-      toast.error(error.response?.data?.message || 'Error al guardar el usuario');
+      const errorMsg = error.response?.data?.message || 'Error al guardar el usuario';
+      toast.error(errorMsg, { duration: 5000 });
     } finally {
       setSaving(false);
     }
@@ -379,15 +394,29 @@ const UsuariosPage = () => {
         title={editingId ? 'Editar Usuario' : 'Registrar Nuevo Usuario'}
       >
         <form onSubmit={handleSave} className="space-y-4">
-          <Input
-            label="DNI (8 dígitos)"
-            required
-            maxLength={8}
-            disabled={!!editingId}
-            value={dni}
-            onChange={(e) => setDni(e.target.value.replace(/\D/g, ''))}
-            placeholder="Ej: 45678901"
-          />
+          <div>
+            <Input
+              label="DNI (8 dígitos)"
+              required
+              maxLength={8}
+              disabled={!!editingId}
+              value={dni}
+              onChange={(e) => setDni(e.target.value.replace(/\D/g, ''))}
+              placeholder="Ej: 45678901"
+            />
+            {existingUserWithDni && (
+              <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800 flex items-start gap-2 shadow-sm animate-fadeIn">
+                <AlertTriangle size={16} className="text-red-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-red-900">¡DNI ya registrado en el sistema!</p>
+                  <p className="mt-0.5">
+                    Este documento ya pertenece a: <span className="font-semibold text-gray-900">{existingUserWithDni.nombres} {existingUserWithDni.apellidos}</span> (Rol: <span className="capitalize font-semibold text-gray-900">{existingUserWithDni.rol}</span>).
+                  </p>
+                  <p className="text-red-700 mt-1 font-medium">No se permite registrar a una misma persona dos veces.</p>
+                </div>
+              </div>
+            )}
+          </div>
 
           <Input
             label="Nombres"
@@ -441,6 +470,7 @@ const UsuariosPage = () => {
             <Button
               type="submit"
               isLoading={saving}
+              disabled={saving || (!!existingUserWithDni && !editingId)}
             >
               {editingId ? 'Actualizar Usuario' : 'Crear Usuario'}
             </Button>

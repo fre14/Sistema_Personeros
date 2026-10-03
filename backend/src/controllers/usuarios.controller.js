@@ -50,14 +50,37 @@ export const getById = async (req, res) => {
 export const create = async (req, res) => {
   try {
     const { password, ...userData } = req.body;
+
+    // Verificar si el DNI ya existe antes de procesar
+    const existingUser = await db('usuarios').where({ dni: userData.dni }).first();
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: `El DNI ${userData.dni} ya se encuentra registrado a nombre de ${existingUser.nombres} ${existingUser.apellidos} (Rol: ${existingUser.rol})`,
+        data: {
+          id: existingUser.id,
+          dni: existingUser.dni,
+          nombres: existingUser.nombres,
+          apellidos: existingUser.apellidos,
+          rol: existingUser.rol
+        }
+      });
+    }
+
     const password_hash = await bcrypt.hash(password, 12);
     
     const [id] = await db('usuarios').insert({ ...userData, password_hash }).returning('id');
     const usuario = await db('usuarios').select('id', 'dni', 'nombres', 'apellidos', 'rol', 'activo').where({ id: id.id || id }).first();
     
     await registrarAuditoria('usuarios', 'create', req.user.id, usuario, req.body);
-    res.status(201).json({ success: true, data: usuario, message: 'Usuario creado' });
+    res.status(201).json({ success: true, data: usuario, message: 'Usuario creado exitosamente' });
   } catch (error) {
+    if (error.code === '23505' || error.message?.includes('usuarios_dni_unique')) {
+      return res.status(409).json({
+        success: false,
+        message: `El DNI ${req.body?.dni} ya se encuentra registrado en el sistema. No se permiten DNIs duplicados.`
+      });
+    }
     res.status(500).json({ success: false, message: 'Error creando usuario', error: error.message });
   }
 };
@@ -68,6 +91,17 @@ export const update = async (req, res) => {
     const { password, ...userData } = req.body;
     const oldData = await db('usuarios').where({ id }).first();
     if (!oldData) return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+
+    // Si se actualiza el DNI, validar que no pertenezca a otro usuario
+    if (userData.dni && userData.dni !== oldData.dni) {
+      const existingUser = await db('usuarios').where({ dni: userData.dni }).whereNot({ id }).first();
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          message: `El DNI ${userData.dni} ya está en uso por otro usuario (${existingUser.nombres} ${existingUser.apellidos}, Rol: ${existingUser.rol})`
+        });
+      }
+    }
     
     const updateData = { ...userData };
     if (password) {
@@ -80,6 +114,12 @@ export const update = async (req, res) => {
     await registrarAuditoria('usuarios', 'update', req.user.id, usuario, req.body, { id: oldData.id, dni: oldData.dni });
     res.json({ success: true, data: usuario, message: 'Usuario actualizado' });
   } catch (error) {
+    if (error.code === '23505' || error.message?.includes('usuarios_dni_unique')) {
+      return res.status(409).json({
+        success: false,
+        message: `El DNI ${req.body?.dni} ya se encuentra registrado en el sistema.`
+      });
+    }
     res.status(500).json({ success: false, message: 'Error actualizando usuario', error: error.message });
   }
 };

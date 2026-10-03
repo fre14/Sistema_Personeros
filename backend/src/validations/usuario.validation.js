@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const createUsuarioSchema = z.object({
-  dni: z.string().length(8, 'El DNI debe tener 8 caracteres'),
+  dni: z.string().regex(/^\d{8}$/, 'El DNI debe tener exactamente 8 dígitos numéricos'),
   nombres: z.string().min(1, 'Los nombres son requeridos'),
   apellidos: z.string().min(1, 'Los apellidos son requeridos'),
   telefono: z.string().optional(),
@@ -11,7 +11,7 @@ export const createUsuarioSchema = z.object({
 });
 
 export const updateUsuarioSchema = z.object({
-  dni: z.string().length(8, 'El DNI debe tener 8 caracteres').optional(),
+  dni: z.string().regex(/^\d{8}$/, 'El DNI debe tener exactamente 8 dígitos numéricos').optional(),
   nombres: z.string().min(1).optional(),
   apellidos: z.string().min(1).optional(),
   telefono: z.string().optional(),
