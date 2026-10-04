@@ -38,6 +38,8 @@ const AsignacionesPage = () => {
   const [modalLocalId, setModalLocalId] = useState('');
   const [modalMesaSearch, setModalMesaSearch] = useState('');
   const [modalSoloDisponibles, setModalSoloDisponibles] = useState(true);
+  const [modalPersoneroSearch, setModalPersoneroSearch] = useState('');
+  const [modalSoloPersonerosLibres, setModalSoloPersonerosLibres] = useState(true);
 
   // Modal Filters (Coordinador -> Local)
   const [modalCoordDistritoId, setModalCoordDistritoId] = useState('');
@@ -75,7 +77,7 @@ const AsignacionesPage = () => {
       if (activeTab === 'personeros') {
         const [asigRes, usersRes, mesasRes] = await Promise.all([
           get(`/asignaciones/personeros${params}`),
-          get('/usuarios?rol=personero'),
+          get('/usuarios?rol=personero&limit=2000'),
           get('/mesas?limit=1000')
         ]);
         setAsignacionesPersoneros(asigRes.data?.data || asigRes.data || []);
@@ -84,7 +86,7 @@ const AsignacionesPage = () => {
       } else {
         const [asigRes, usersRes] = await Promise.all([
           get(`/asignaciones/coordinadores${params}`),
-          get('/usuarios?rol=coordinador')
+          get('/usuarios?rol=coordinador&limit=2000')
         ]);
         setAsignacionesCoordinadores(asigRes.data?.data || asigRes.data || []);
         setCoordinadoresDisponibles(usersRes.data?.data || usersRes.data || []);
@@ -108,6 +110,52 @@ const AsignacionesPage = () => {
     if (!modalDistritoId) return localesDisponibles;
     return localesDisponibles.filter(l => String(l.distrito_id) === String(modalDistritoId));
   }, [localesDisponibles, modalDistritoId]);
+
+  // Map of active personero assignments
+  const assignedPersoneroUserIds = useMemo(() => {
+    return new Set(asignacionesPersoneros.map(a => a.usuario_id));
+  }, [asignacionesPersoneros]);
+
+  const personeroAssignmentMap = useMemo(() => {
+    const map = new Map();
+    asignacionesPersoneros.forEach(a => map.set(a.usuario_id, a));
+    return map;
+  }, [asignacionesPersoneros]);
+
+  const personerosLibresCount = useMemo(() => {
+    return personerosDisponibles.filter(u => !assignedPersoneroUserIds.has(u.id)).length;
+  }, [personerosDisponibles, assignedPersoneroUserIds]);
+
+  const filteredModalPersoneros = useMemo(() => {
+    return personerosDisponibles.filter(u => {
+      const isAssigned = assignedPersoneroUserIds.has(u.id);
+      if (modalSoloPersonerosLibres && isAssigned) return false;
+      if (modalPersoneroSearch.trim()) {
+        const q = modalPersoneroSearch.trim().toLowerCase();
+        const dniMatch = u.dni && u.dni.toLowerCase().includes(q);
+        const nameMatch = `${u.nombres} ${u.apellidos}`.toLowerCase().includes(q);
+        if (!dniMatch && !nameMatch) return false;
+      }
+      return true;
+    });
+  }, [personerosDisponibles, assignedPersoneroUserIds, modalSoloPersonerosLibres, modalPersoneroSearch]);
+
+  const selectedPersoneroAssignment = useMemo(() => {
+    if (!selectedUsuarioId) return null;
+    return personeroAssignmentMap.get(Number(selectedUsuarioId));
+  }, [selectedUsuarioId, personeroAssignmentMap]);
+
+  // Auto-sync selectedUsuarioId with filteredModalPersoneros
+  useEffect(() => {
+    if (modalPersoneroOpen && filteredModalPersoneros.length > 0) {
+      const exists = filteredModalPersoneros.some(u => String(u.id) === String(selectedUsuarioId));
+      if (!exists) {
+        setSelectedUsuarioId(String(filteredModalPersoneros[0].id));
+      }
+    } else if (modalPersoneroOpen && filteredModalPersoneros.length === 0) {
+      setSelectedUsuarioId('');
+    }
+  }, [filteredModalPersoneros, modalPersoneroOpen]);
 
   // Modal Mesas filtered by distrito, local, search input, and disponibilidad
   const filteredModalMesas = useMemo(() => {
@@ -180,7 +228,10 @@ const AsignacionesPage = () => {
     setModalLocalId('');
     setModalMesaSearch('');
     setModalSoloDisponibles(true);
-    setSelectedUsuarioId(personerosDisponibles.length > 0 ? String(personerosDisponibles[0].id) : '');
+    setModalPersoneroSearch('');
+    setModalSoloPersonerosLibres(true);
+    const firstFreePerson = personerosDisponibles.find(u => !assignedPersoneroUserIds.has(u.id)) || personerosDisponibles[0];
+    setSelectedUsuarioId(firstFreePerson ? String(firstFreePerson.id) : '');
     const firstFree = mesasDisponibles.find(m => !m.asignacion_id) || mesasDisponibles[0];
     setSelectedMesaId(firstFree ? String(firstFree.id) : '');
     setModalPersoneroOpen(true);
@@ -207,11 +258,15 @@ const AsignacionesPage = () => {
         usuario_id: Number(selectedUsuarioId),
         mesa_id: Number(selectedMesaId)
       });
-      toast.success('Personero asignado exitosamente');
+      toast.success(
+        selectedPersoneroAssignment
+          ? 'Personero reubicado exitosamente a la nueva mesa'
+          : 'Personero asignado exitosamente'
+      );
       setModalPersoneroOpen(false);
       fetchData();
     } catch (error) {
-      toast.error(error.response?.data?.message || 'Error al asignar personero (mesa posiblemente ya ocupada)');
+      toast.error(error.response?.data?.message || 'Error al asignar personero');
     } finally {
       setSaving(false);
     }
@@ -245,7 +300,7 @@ const AsignacionesPage = () => {
 
     try {
       await del(`/asignaciones/personeros/${id}`);
-      toast.success('Asignación cancelada');
+      toast.success(`Asignación cancelada. ${nombre} ahora está disponible para reasignar en cualquier local.`);
       fetchData();
     } catch (error) {
       toast.error(error.response?.data?.message || 'Error al desasignar');
@@ -257,7 +312,7 @@ const AsignacionesPage = () => {
 
     try {
       await del(`/asignaciones/coordinadores/${id}`);
-      toast.success('Asignación cancelada');
+      toast.success(`Asignación cancelada. ${nombre} ahora está disponible para reasignar.`);
       fetchData();
     } catch (error) {
       toast.error(error.response?.data?.message || 'Error al desasignar');
@@ -487,23 +542,71 @@ const AsignacionesPage = () => {
         title="Asignar Personero a Mesa de Sufragio"
       >
         <form onSubmit={handleSavePersonero} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
-              1. Seleccionar Personero Registrado <span className="text-red-500">*</span>
-            </label>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-700">
+                1. Seleccionar Personero <span className="text-red-500">*</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setModalSoloPersonerosLibres(!modalSoloPersonerosLibres)}
+                  className={`px-2 py-0.5 rounded text-xs font-semibold cursor-pointer transition-colors ${
+                    modalSoloPersonerosLibres 
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                      : 'bg-gray-100 text-gray-600 border border-gray-200'
+                  }`}
+                >
+                  {modalSoloPersonerosLibres ? `🟢 Solo Disponibles (${personerosLibresCount})` : `Todos (${personerosDisponibles.length})`}
+                </button>
+              </div>
+            </div>
+
+            {/* Buscador de Personero en Modal */}
+            <div className="relative">
+              <input
+                type="text"
+                value={modalPersoneroSearch}
+                onChange={(e) => setModalPersoneroSearch(e.target.value)}
+                placeholder="Buscar personero por DNI o Nombre..."
+                className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-md text-xs focus:ring-red-500 focus:border-red-500 bg-white"
+              />
+              <Search size={13} className="absolute left-2.5 top-2 text-gray-400" />
+              {modalPersoneroSearch && (
+                <button
+                  type="button"
+                  onClick={() => setModalPersoneroSearch('')}
+                  className="absolute right-2.5 top-1.5 text-xs text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
             <select
               value={selectedUsuarioId}
               onChange={(e) => setSelectedUsuarioId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500 text-sm bg-white font-medium"
               required
             >
-              <option value="">-- Seleccionar Personero ({personerosDisponibles.length}) --</option>
-              {personerosDisponibles.map(u => (
-                <option key={u.id} value={String(u.id)}>
-                  {u.dni} — {u.nombres} {u.apellidos}
-                </option>
-              ))}
+              <option value="">-- Seleccionar Personero ({filteredModalPersoneros.length}) --</option>
+              {filteredModalPersoneros.map(u => {
+                const asig = personeroAssignmentMap.get(u.id);
+                return (
+                  <option key={u.id} value={String(u.id)}>
+                    {asig 
+                      ? `🟡 [En Mesa ${asig.numero_mesa}] ${u.dni} — ${u.nombres} ${u.apellidos}`
+                      : `🟢 [DISPONIBLE] ${u.dni} — ${u.nombres} ${u.apellidos}`}
+                  </option>
+                );
+              })}
             </select>
+
+            {selectedPersoneroAssignment && (
+              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-md text-xs text-amber-900 leading-relaxed">
+                <span>⚠️ Este personero ya se encuentra asignado a la <b>Mesa {selectedPersoneroAssignment.numero_mesa}</b> ({selectedPersoneroAssignment.local_nombre}). Al confirmar esta asignación, se <b>liberará automáticamente su mesa anterior</b> y se reubicará a la nueva mesa seleccionada.</span>
+              </div>
+            )}
           </div>
 
           {/* Panel de Filtros para Encontrar Mesa */}

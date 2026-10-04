@@ -11,16 +11,32 @@ export const asignarPersonero = async (req, res) => {
       const mesa = await trx('mesas_sufragio as mesas').where({ id: mesa_id }).first();
       if (!mesa) return res.status(400).json({ success: false, message: 'Mesa inválida' });
       
-      const existingUser = await trx('asignacion_personeros').where({ usuario_id, activo: true }).first();
-      if (existingUser) return res.status(400).json({ success: false, message: 'El personero ya tiene una mesa asignada' });
+      const existingMesa = await trx('asignacion_personeros').where({ mesa_id }).first();
+      if (existingMesa && existingMesa.activo !== false && existingMesa.usuario_id !== usuario_id) {
+        return res.status(400).json({ success: false, message: 'La mesa ya tiene personero asignado' });
+      }
 
-      const existing = await trx('asignacion_personeros').where({ mesa_id }).first();
-      if (existing && existing.activo !== false) return res.status(400).json({ success: false, message: 'Mesa ya tiene personero asignado' });
-      
+      // Si el personero ya tiene asignación activa en otra mesa, liberar la mesa previa automáticamente
+      const existingUser = await trx('asignacion_personeros').where({ usuario_id, activo: true }).first();
+      if (existingUser) {
+        if (existingUser.mesa_id === mesa_id) {
+          return res.status(400).json({ success: false, message: 'El personero ya está asignado a esta misma mesa' });
+        }
+        await trx('asignacion_personeros').where({ id: existingUser.id }).update({ activo: false });
+        await trx('historial_asignaciones').insert({
+          tipo: 'personero',
+          mesa_id: existingUser.mesa_id,
+          usuario_anterior_id: usuario_id,
+          usuario_nuevo_id: null,
+          motivo_cambio: `Reubicación a mesa ${mesa.numero_mesa}`,
+          cambiado_por: req.user?.id || null
+        });
+      }
+
       let id;
-      if (existing) {
-        await trx('asignacion_personeros').where({ id: existing.id }).update({ usuario_id, activo: true, asignado_en: trx.fn.now() });
-        id = existing.id;
+      if (existingMesa) {
+        await trx('asignacion_personeros').where({ id: existingMesa.id }).update({ usuario_id, activo: true, asignado_en: trx.fn.now() });
+        id = existingMesa.id;
       } else {
         const [idRes] = await trx('asignacion_personeros').insert({ usuario_id, mesa_id, activo: true }).returning('id');
         id = idRes.id || idRes;
@@ -30,7 +46,7 @@ export const asignarPersonero = async (req, res) => {
         tipo: 'personero',
         mesa_id: mesa_id,
         usuario_nuevo_id: usuario_id,
-        motivo_cambio: 'Asignación inicial',
+        motivo_cambio: existingUser ? 'Reubicación de mesa' : 'Asignación inicial',
         cambiado_por: req.user?.id || null
       });
       
