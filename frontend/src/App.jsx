@@ -24,6 +24,7 @@ const CandidatosPage = lazy(() => import('./pages/admin/CandidatosPage'));
 const AsignacionesPage = lazy(() => import('./pages/admin/AsignacionesPage'));
 const ResultadosAdminPage = lazy(() => import('./pages/admin/ResultadosAdminPage'));
 const AuditoriaPage = lazy(() => import('./pages/admin/AuditoriaPage'));
+const ExportarDatosPage = lazy(() => import('./pages/admin/ExportarDatosPage'));
 
 const CoordinadorLayout = lazy(() => import('./components/layout/CoordinadorLayout'));
 const MisLocalesPage = lazy(() => import('./pages/coordinador/MisLocalesPage'));
@@ -70,6 +71,7 @@ const router = createBrowserRouter([
       { path: 'candidatos', element: <CandidatosPage /> },
       { path: 'asignaciones', element: <AsignacionesPage /> },
       { path: 'resultados', element: <ResultadosAdminPage /> },
+      { path: 'exportar', element: <ExportarDatosPage /> },
       { path: 'auditoria', element: <AuditoriaPage /> },
       { path: '', element: <Navigate to="/admin/dashboard" replace /> },
     ],

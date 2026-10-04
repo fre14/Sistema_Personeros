@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { get, post, del } from '../../services/api';
+import api, { get, post, del } from '../../services/api';
 import Card from '../../components/ui/Card';
 import Table from '../../components/ui/Table';
 import Button from '../../components/ui/Button';
@@ -7,7 +7,7 @@ import Modal from '../../components/ui/Modal';
 import Select from '../../components/ui/Select';
 import SearchInput from '../../components/ui/SearchInput';
 import toast from 'react-hot-toast';
-import { ClipboardList, UserCheck, Shield, Trash2, Plus, Filter, X, Search, Zap, CheckCircle2 } from 'lucide-react';
+import { ClipboardList, UserCheck, Shield, Trash2, Plus, Filter, X, Search, Zap, CheckCircle2, FileSpreadsheet, Download } from 'lucide-react';
 
 const AsignacionesPage = () => {
   const [activeTab, setActiveTab] = useState('personeros'); // 'personeros' | 'coordinadores'
@@ -53,6 +53,10 @@ const AsignacionesPage = () => {
   // Modal Filters (Coordinador -> Local)
   const [modalCoordDistritoId, setModalCoordDistritoId] = useState('');
   const [modalCoordSearch, setModalCoordSearch] = useState('');
+
+  // Export States
+  const [exportandoColegios, setExportandoColegios] = useState(false);
+  const [exportandoAsignaciones, setExportandoAsignaciones] = useState(false);
 
   useEffect(() => {
     fetchDistritos();
@@ -411,6 +415,52 @@ const AsignacionesPage = () => {
     }
   };
 
+  const handleExportarColegiosExcel = async () => {
+    setExportandoColegios(true);
+    const toastId = toast.loading('Generando Excel por Colegios (94 hojas)...');
+    try {
+      const res = await api.get('/descargas/colegios-excel', { responseType: 'blob', timeout: 0 });
+      const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Distribucion_Colegios_Mesas_Faltantes_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success('¡Excel de colegios descargado exitosamente!', { id: toastId });
+    } catch (error) {
+      console.error('Error al exportar colegios:', error);
+      toast.error('Error al descargar el archivo Excel', { id: toastId });
+    } finally {
+      setExportandoColegios(false);
+    }
+  };
+
+  const handleExportarAsignacionesExcel = async () => {
+    setExportandoAsignaciones(true);
+    const toastId = toast.loading('Generando relación de asignaciones...');
+    try {
+      const res = await api.get('/descargas/asignaciones-excel', { responseType: 'blob', timeout: 0 });
+      const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Relacion_General_Asignaciones_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success('¡Excel de asignaciones descargado exitosamente!', { id: toastId });
+    } catch (error) {
+      console.error('Error al exportar asignaciones:', error);
+      toast.error('Error al descargar el archivo Excel', { id: toastId });
+    } finally {
+      setExportandoAsignaciones(false);
+    }
+  };
+
   const hasActiveFilters = searchTerm || selectedDistrito || selectedLocal;
 
   const personeroOptions = personerosDisponibles.map(u => ({
@@ -444,27 +494,51 @@ const AsignacionesPage = () => {
           <p className="text-sm text-gray-500">Distribución y control de personeros y coordinadores electorales</p>
         </div>
 
-        {activeTab === 'personeros' ? (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleOpenAutoAsignar}
-              className="px-3.5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center font-medium shadow-sm transition-colors text-sm"
-              title="Asignar automáticamente personeros libres a mesas vacías"
-            >
-              <Zap size={16} className="mr-1.5 text-amber-300" />
-              ⚡ Auto-Asignar Libres ({personerosLibresCount})
-            </button>
-            <Button onClick={handleOpenAssignPersonero} className="flex items-center">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Botón Exportar Colegios Excel */}
+          <button
+            onClick={handleExportarColegiosExcel}
+            disabled={exportandoColegios}
+            className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg flex items-center font-bold shadow-xs transition-colors text-xs sm:text-sm cursor-pointer border border-emerald-600"
+            title="Descargar Excel con 1 hoja por colegio, mesas faltantes y coordinadores"
+          >
+            <FileSpreadsheet size={16} className="mr-1.5" />
+            {exportandoColegios ? 'Exportando Colegios...' : 'Exportar Colegios (Excel)'}
+          </button>
+
+          {/* Botón Exportar Asignaciones Excel */}
+          <button
+            onClick={handleExportarAsignacionesExcel}
+            disabled={exportandoAsignaciones}
+            className="px-3.5 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-lg flex items-center font-bold shadow-xs transition-colors text-xs sm:text-sm cursor-pointer border border-blue-600"
+            title="Descargar relación consolidada de personeros y coordinadores"
+          >
+            <Download size={16} className="mr-1.5" />
+            {exportandoAsignaciones ? 'Exportando...' : 'Exportar Asignaciones'}
+          </button>
+
+          {activeTab === 'personeros' ? (
+            <>
+              <button
+                onClick={handleOpenAutoAsignar}
+                className="px-3.5 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 flex items-center font-medium shadow-xs transition-colors text-xs sm:text-sm"
+                title="Asignar automáticamente personeros libres a mesas vacías"
+              >
+                <Zap size={16} className="mr-1.5 text-amber-200" />
+                ⚡ Auto-Asignar ({personerosLibresCount})
+              </button>
+              <Button onClick={handleOpenAssignPersonero} className="flex items-center">
+                <Plus size={18} className="mr-1" />
+                Asignar a Mesa
+              </Button>
+            </>
+          ) : (
+            <Button onClick={handleOpenAssignCoordinador} className="flex items-center">
               <Plus size={18} className="mr-1" />
-              Asignar a Mesa
+              Asignar a Local
             </Button>
-          </div>
-        ) : (
-          <Button onClick={handleOpenAssignCoordinador} className="flex items-center">
-            <Plus size={18} className="mr-1" />
-            Asignar a Local
-          </Button>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Tabs */}

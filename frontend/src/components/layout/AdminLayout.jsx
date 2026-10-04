@@ -3,7 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
-import { LayoutDashboard, Users, MapPin, Inbox, UsersRound, ClipboardList, BarChart3, ShieldCheck, LogOut, Menu, Key } from 'lucide-react';
+import { LayoutDashboard, Users, MapPin, Inbox, UsersRound, ClipboardList, BarChart3, ShieldCheck, LogOut, Menu, Key, FileSpreadsheet } from 'lucide-react';
 
 const AdminLayout = () => {
   const { user, logout } = useAuth();
@@ -50,6 +50,7 @@ const AdminLayout = () => {
     { to: '/admin/candidatos', icon: UsersRound, label: 'Candidatos' },
     { to: '/admin/asignaciones', icon: ClipboardList, label: 'Asignaciones' },
     { to: '/admin/resultados', icon: BarChart3, label: 'Resultados' },
+    { to: '/admin/exportar', icon: FileSpreadsheet, label: 'Exportar Datos' },
     { to: '/admin/auditoria', icon: ShieldCheck, label: 'Auditoría' },
   ];
 
