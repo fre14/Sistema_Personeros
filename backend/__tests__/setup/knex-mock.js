@@ -25,7 +25,7 @@ import { jest } from '@jest/globals';
 
 const METODOS_ENCADENABLES = [
   'where', 'whereIn', 'whereNotIn', 'whereNull', 'whereNotNull', 'whereNot',
-  'whereRaw', 'whereExists', 'andWhere', 'orWhere', 'andOn', 'on', 'onIn',
+  'whereRaw', 'whereExists', 'whereNotExists', 'andWhere', 'orWhere', 'andOn', 'on', 'onIn',
   'join', 'leftJoin', 'rightJoin', 'innerJoin', 'crossJoin',
   'select', 'distinct', 'column', 'as',
   'count', 'countDistinct', 'sum', 'sumDistinct', 'avg', 'min', 'max',

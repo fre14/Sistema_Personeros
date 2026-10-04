@@ -7,11 +7,12 @@ import Modal from '../../components/ui/Modal';
 import Select from '../../components/ui/Select';
 import SearchInput from '../../components/ui/SearchInput';
 import toast from 'react-hot-toast';
-import { ClipboardList, UserCheck, Shield, Trash2, Plus, Filter, X, Search } from 'lucide-react';
+import { ClipboardList, UserCheck, Shield, Trash2, Plus, Filter, X, Search, Zap, CheckCircle2 } from 'lucide-react';
 
 const AsignacionesPage = () => {
   const [activeTab, setActiveTab] = useState('personeros'); // 'personeros' | 'coordinadores'
   const [asignacionesPersoneros, setAsignacionesPersoneros] = useState([]);
+  const [todasAsignacionesPersoneros, setTodasAsignacionesPersoneros] = useState([]);
   const [asignacionesCoordinadores, setAsignacionesCoordinadores] = useState([]);
   const [personerosDisponibles, setPersonerosDisponibles] = useState([]);
   const [coordinadoresDisponibles, setCoordinadoresDisponibles] = useState([]);
@@ -25,7 +26,7 @@ const AsignacionesPage = () => {
   const [selectedDistrito, setSelectedDistrito] = useState('');
   const [selectedLocal, setSelectedLocal] = useState('');
 
-  // Modal State
+  // Modal State (Manual Assignment)
   const [modalPersoneroOpen, setModalPersoneroOpen] = useState(false);
   const [modalCoordinadorOpen, setModalCoordinadorOpen] = useState(false);
   const [selectedUsuarioId, setSelectedUsuarioId] = useState('');
@@ -40,6 +41,14 @@ const AsignacionesPage = () => {
   const [modalSoloDisponibles, setModalSoloDisponibles] = useState(true);
   const [modalPersoneroSearch, setModalPersoneroSearch] = useState('');
   const [modalSoloPersonerosLibres, setModalSoloPersonerosLibres] = useState(true);
+
+  // Auto-Assign State
+  const [modalAutoAsignarOpen, setModalAutoAsignarOpen] = useState(false);
+  const [autoAsignarDistritoId, setAutoAsignarDistritoId] = useState('');
+  const [autoAsignarLocalId, setAutoAsignarLocalId] = useState('');
+  const [selectedAutoPersoneroIds, setSelectedAutoPersoneroIds] = useState(new Set());
+  const [autoAsignando, setAutoAsignando] = useState(false);
+  const [autoAsignarResult, setAutoAsignarResult] = useState(null);
 
   // Modal Filters (Coordinador -> Local)
   const [modalCoordDistritoId, setModalCoordDistritoId] = useState('');
@@ -75,12 +84,14 @@ const AsignacionesPage = () => {
       if (selectedLocal) params += `&local_id=${selectedLocal}`;
 
       if (activeTab === 'personeros') {
-        const [asigRes, usersRes, mesasRes] = await Promise.all([
+        const [asigRes, allAsigRes, usersRes, mesasRes] = await Promise.all([
           get(`/asignaciones/personeros${params}`),
+          get('/asignaciones/personeros'),
           get('/usuarios?rol=personero&limit=2000'),
           get('/mesas?limit=1000')
         ]);
         setAsignacionesPersoneros(asigRes.data?.data || asigRes.data || []);
+        setTodasAsignacionesPersoneros(allAsigRes.data?.data || allAsigRes.data || []);
         setPersonerosDisponibles(usersRes.data?.data || usersRes.data || []);
         setMesasDisponibles(mesasRes.data?.data || mesasRes.data || []);
       } else {
@@ -99,6 +110,9 @@ const AsignacionesPage = () => {
     }
   };
 
+  // Helper para normalizar texto (ignorar tildes y mayúsculas en búsquedas)
+  const normalize = (str) => (str || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
   // Filter locales by selected district in the page filter bar
   const filteredLocalesForFilter = useMemo(() => {
     if (!selectedDistrito) return localesDisponibles;
@@ -111,32 +125,43 @@ const AsignacionesPage = () => {
     return localesDisponibles.filter(l => String(l.distrito_id) === String(modalDistritoId));
   }, [localesDisponibles, modalDistritoId]);
 
-  // Map of active personero assignments
+  // Mapa global de personeros asignados (a nivel de toda la provincia, independiente de filtros de tabla)
   const assignedPersoneroUserIds = useMemo(() => {
-    return new Set(asignacionesPersoneros.map(a => a.usuario_id));
-  }, [asignacionesPersoneros]);
+    return new Set(todasAsignacionesPersoneros.map(a => a.usuario_id));
+  }, [todasAsignacionesPersoneros]);
 
   const personeroAssignmentMap = useMemo(() => {
     const map = new Map();
-    asignacionesPersoneros.forEach(a => map.set(a.usuario_id, a));
+    todasAsignacionesPersoneros.forEach(a => map.set(a.usuario_id, a));
     return map;
-  }, [asignacionesPersoneros]);
+  }, [todasAsignacionesPersoneros]);
 
-  const personerosLibresCount = useMemo(() => {
-    return personerosDisponibles.filter(u => !assignedPersoneroUserIds.has(u.id)).length;
+  // Lista de personeros completamente libres (sin ninguna mesa asignada)
+  const personerosLibresGlobal = useMemo(() => {
+    return personerosDisponibles.filter(u => !assignedPersoneroUserIds.has(u.id));
   }, [personerosDisponibles, assignedPersoneroUserIds]);
 
+  const personerosLibresCount = personerosLibresGlobal.length;
+
   const filteredModalPersoneros = useMemo(() => {
-    return personerosDisponibles.filter(u => {
+    const q = normalize(modalPersoneroSearch);
+    const list = personerosDisponibles.filter(u => {
       const isAssigned = assignedPersoneroUserIds.has(u.id);
       if (modalSoloPersonerosLibres && isAssigned) return false;
-      if (modalPersoneroSearch.trim()) {
-        const q = modalPersoneroSearch.trim().toLowerCase();
-        const dniMatch = u.dni && u.dni.toLowerCase().includes(q);
-        const nameMatch = `${u.nombres} ${u.apellidos}`.toLowerCase().includes(q);
+      if (q) {
+        const dniMatch = u.dni && u.dni.includes(q);
+        const nameMatch = normalize(`${u.nombres} ${u.apellidos}`).includes(q);
         if (!dniMatch && !nameMatch) return false;
       }
       return true;
+    });
+
+    // Ordenar: primero los DISPONIBLES (libres), y luego alfabéticamente
+    return list.sort((a, b) => {
+      const aAssigned = assignedPersoneroUserIds.has(a.id) ? 1 : 0;
+      const bAssigned = assignedPersoneroUserIds.has(b.id) ? 1 : 0;
+      if (aAssigned !== bAssigned) return aAssigned - bAssigned;
+      return `${a.nombres} ${a.apellidos}`.localeCompare(`${b.nombres} ${b.apellidos}`);
     });
   }, [personerosDisponibles, assignedPersoneroUserIds, modalSoloPersonerosLibres, modalPersoneroSearch]);
 
@@ -224,15 +249,15 @@ const AsignacionesPage = () => {
   };
 
   const handleOpenAssignPersonero = () => {
-    setModalDistritoId('');
-    setModalLocalId('');
+    setModalDistritoId(selectedDistrito || '');
+    setModalLocalId(selectedLocal || '');
     setModalMesaSearch('');
     setModalSoloDisponibles(true);
     setModalPersoneroSearch('');
     setModalSoloPersonerosLibres(true);
-    const firstFreePerson = personerosDisponibles.find(u => !assignedPersoneroUserIds.has(u.id)) || personerosDisponibles[0];
+    const firstFreePerson = personerosLibresGlobal.length > 0 ? personerosLibresGlobal[0] : personerosDisponibles[0];
     setSelectedUsuarioId(firstFreePerson ? String(firstFreePerson.id) : '');
-    const firstFree = mesasDisponibles.find(m => !m.asignacion_id) || mesasDisponibles[0];
+    const firstFree = mesasDisponibles.find(m => !m.asignacion_id && (!selectedLocal || String(m.local_id) === String(selectedLocal))) || mesasDisponibles.find(m => !m.asignacion_id) || mesasDisponibles[0];
     setSelectedMesaId(firstFree ? String(firstFree.id) : '');
     setModalPersoneroOpen(true);
   };
@@ -243,6 +268,72 @@ const AsignacionesPage = () => {
     setSelectedUsuarioId(coordinadoresDisponibles.length > 0 ? String(coordinadoresDisponibles[0].id) : '');
     setSelectedLocalId(localesDisponibles.length > 0 ? String(localesDisponibles[0].id) : '');
     setModalCoordinadorOpen(true);
+  };
+
+  const handleOpenAutoAsignar = () => {
+    setAutoAsignarDistritoId(selectedDistrito || '');
+    setAutoAsignarLocalId(selectedLocal || '');
+    setAutoAsignarResult(null);
+    const libreIds = new Set(personerosLibresGlobal.map(u => u.id));
+    setSelectedAutoPersoneroIds(libreIds);
+    setModalAutoAsignarOpen(true);
+  };
+
+  const handleToggleSelectAutoPersonero = (id) => {
+    setSelectedAutoPersoneroIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllAutoPersoneros = () => {
+    if (selectedAutoPersoneroIds.size === personerosLibresGlobal.length) {
+      setSelectedAutoPersoneroIds(new Set());
+    } else {
+      setSelectedAutoPersoneroIds(new Set(personerosLibresGlobal.map(u => u.id)));
+    }
+  };
+
+  const mesasLibresAutoAsignar = useMemo(() => {
+    return mesasDisponibles.filter(m => {
+      if (m.asignacion_id) return false;
+      if (autoAsignarLocalId && String(m.local_id) !== String(autoAsignarLocalId)) return false;
+      if (autoAsignarDistritoId && String(m.distrito_id) !== String(autoAsignarDistritoId)) return false;
+      return true;
+    });
+  }, [mesasDisponibles, autoAsignarLocalId, autoAsignarDistritoId]);
+
+  const handleExecuteAutoAsignar = async () => {
+    if (selectedAutoPersoneroIds.size === 0) {
+      toast.error('Seleccione al menos un personero libre');
+      return;
+    }
+    if (mesasLibresAutoAsignar.length === 0) {
+      toast.error('No hay mesas libres disponibles en la ubicación seleccionada');
+      return;
+    }
+
+    setAutoAsignando(true);
+    try {
+      const res = await post('/asignaciones/personeros/auto-asignar', {
+        local_id: autoAsignarLocalId ? Number(autoAsignarLocalId) : null,
+        distrito_id: autoAsignarDistritoId ? Number(autoAsignarDistritoId) : null,
+        usuario_ids: Array.from(selectedAutoPersoneroIds)
+      });
+
+      toast.success(res.data?.message || 'Personeros asignados automáticamente');
+      setAutoAsignarResult(res.data?.data || null);
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Error al auto-asignar personeros');
+    } finally {
+      setAutoAsignando(false);
+    }
   };
 
   const handleSavePersonero = async (e) => {
@@ -256,7 +347,8 @@ const AsignacionesPage = () => {
     try {
       await post('/asignaciones/personeros', {
         usuario_id: Number(selectedUsuarioId),
-        mesa_id: Number(selectedMesaId)
+        mesa_id: Number(selectedMesaId),
+        reubicar: !!selectedPersoneroAssignment
       });
       toast.success(
         selectedPersoneroAssignment
@@ -353,10 +445,20 @@ const AsignacionesPage = () => {
         </div>
 
         {activeTab === 'personeros' ? (
-          <Button onClick={handleOpenAssignPersonero} className="flex items-center">
-            <Plus size={18} className="mr-1" />
-            Asignar a Mesa
-          </Button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleOpenAutoAsignar}
+              className="px-3.5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center font-medium shadow-sm transition-colors text-sm"
+              title="Asignar automáticamente personeros libres a mesas vacías"
+            >
+              <Zap size={16} className="mr-1.5 text-amber-300" />
+              ⚡ Auto-Asignar Libres ({personerosLibresCount})
+            </button>
+            <Button onClick={handleOpenAssignPersonero} className="flex items-center">
+              <Plus size={18} className="mr-1" />
+              Asignar a Mesa
+            </Button>
+          </div>
         ) : (
           <Button onClick={handleOpenAssignCoordinador} className="flex items-center">
             <Plus size={18} className="mr-1" />
@@ -568,18 +670,29 @@ const AsignacionesPage = () => {
                 type="text"
                 value={modalPersoneroSearch}
                 onChange={(e) => setModalPersoneroSearch(e.target.value)}
-                placeholder="Buscar personero por DNI o Nombre..."
-                className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-md text-xs focus:ring-red-500 focus:border-red-500 bg-white"
+                placeholder="Buscar por DNI, Nombre o Apellidos (ej: Jackeline, Quispe, 7435...)"
+                className="w-full pl-8 pr-8 py-2 border border-gray-300 rounded-md text-xs focus:ring-red-500 focus:border-red-500 bg-white"
+                autoFocus
               />
-              <Search size={13} className="absolute left-2.5 top-2 text-gray-400" />
+              <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
               {modalPersoneroSearch && (
                 <button
                   type="button"
                   onClick={() => setModalPersoneroSearch('')}
-                  className="absolute right-2.5 top-1.5 text-xs text-gray-400 hover:text-gray-600"
+                  className="absolute right-2.5 top-2 text-xs text-gray-400 hover:text-gray-600 font-bold"
                 >
-                  ×
+                  ✕
                 </button>
+              )}
+            </div>
+
+            <div className="flex justify-between items-center text-[11px] text-gray-500 px-1">
+              <span>
+                Mostrando <b>{filteredModalPersoneros.length}</b> de <b>{personerosDisponibles.length}</b> personeros
+                ({filteredModalPersoneros.filter(u => !assignedPersoneroUserIds.has(u.id)).length} libres)
+              </span>
+              {modalPersoneroSearch && (
+                <span className="text-red-600 font-semibold">Búsqueda: "{modalPersoneroSearch}"</span>
               )}
             </div>
 
@@ -595,7 +708,7 @@ const AsignacionesPage = () => {
                 return (
                   <option key={u.id} value={String(u.id)}>
                     {asig 
-                      ? `🟡 [En Mesa ${asig.numero_mesa}] ${u.dni} — ${u.nombres} ${u.apellidos}`
+                      ? `🟡 [En Mesa ${asig.numero_mesa} - ${asig.local_nombre || 'Local'}] ${u.dni} — ${u.nombres} ${u.apellidos}`
                       : `🟢 [DISPONIBLE] ${u.dni} — ${u.nombres} ${u.apellidos}`}
                   </option>
                 );
@@ -879,6 +992,197 @@ const AsignacionesPage = () => {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal Auto-Asignar Personeros */}
+      <Modal
+        isOpen={modalAutoAsignarOpen}
+        onClose={() => setModalAutoAsignarOpen(false)}
+        title="⚡ Auto-Asignación Rápida de Personeros Libres"
+        maxWidth="max-w-2xl"
+      >
+        {autoAsignarResult ? (
+          <div className="space-y-4">
+            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-3">
+              <CheckCircle2 size={24} className="text-emerald-600 flex-shrink-0" />
+              <div>
+                <h4 className="text-sm font-bold text-emerald-900">¡Asignación Automática Completada con Éxito!</h4>
+                <p className="text-xs text-emerald-700 mt-0.5">
+                  Se asignaron <b>{autoAsignarResult.total_asignados}</b> personeros a sus mesas correspondientes. Sus contraseñas se han establecido con su número de mesa para facilitar su ingreso al sistema.
+                </p>
+              </div>
+            </div>
+
+            <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg">
+              <table className="min-w-full divide-y divide-gray-200 text-xs">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-bold text-gray-700">DNI</th>
+                    <th className="px-3 py-2 text-left font-bold text-gray-700">Personero</th>
+                    <th className="px-3 py-2 text-left font-bold text-gray-700">Local de Votación</th>
+                    <th className="px-3 py-2 text-left font-bold text-gray-700">Mesa</th>
+                    <th className="px-3 py-2 text-left font-bold text-gray-700">Contraseña</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 bg-white">
+                  {autoAsignarResult.detalles?.map((det, idx) => (
+                    <tr key={idx} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 font-mono font-bold text-gray-900">{det.dni}</td>
+                      <td className="px-3 py-2 font-medium text-gray-800">{det.nombres}</td>
+                      <td className="px-3 py-2 text-gray-600">{det.local_nombre}</td>
+                      <td className="px-3 py-2 font-bold text-red-600">{det.numero_mesa}</td>
+                      <td className="px-3 py-2 font-mono bg-emerald-50 text-emerald-800 font-semibold">{det.contrasena_asignada}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button onClick={() => setModalAutoAsignarOpen(false)}>
+                Aceptar y Ver Tabla
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Resumen estadístico */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-center">
+                <span className="block text-xs font-semibold text-emerald-700 uppercase">Personeros Libres</span>
+                <span className="text-xl font-extrabold text-emerald-900">{personerosLibresGlobal.length}</span>
+              </div>
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
+                <span className="block text-xs font-semibold text-blue-700 uppercase">Mesas Libres Destino</span>
+                <span className="text-xl font-extrabold text-blue-900">{mesasLibresAutoAsignar.length}</span>
+              </div>
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-center">
+                <span className="block text-xs font-semibold text-red-700 uppercase">Se Asignarán</span>
+                <span className="text-xl font-extrabold text-red-900">
+                  {Math.min(selectedAutoPersoneroIds.size, mesasLibresAutoAsignar.length)}
+                </span>
+              </div>
+            </div>
+
+            {/* Selector de Ubicación Destino */}
+            <div className="bg-gray-50 p-3.5 rounded-lg border border-gray-200 space-y-2.5">
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-800">
+                1. Seleccionar Local Destino para las Mesas
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Distrito (Opcional)</label>
+                  <select
+                    value={autoAsignarDistritoId}
+                    onChange={(e) => {
+                      setAutoAsignarDistritoId(e.target.value);
+                      setAutoAsignarLocalId('');
+                    }}
+                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-xs bg-white focus:ring-red-500 focus:border-red-500"
+                  >
+                    <option value="">Todos los distritos</option>
+                    {distritos.map(d => (
+                      <option key={d.id} value={String(d.id)}>{d.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Local de Votación</label>
+                  <select
+                    value={autoAsignarLocalId}
+                    onChange={(e) => setAutoAsignarLocalId(e.target.value)}
+                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-xs bg-white focus:ring-red-500 focus:border-red-500 font-medium"
+                  >
+                    <option value="">-- Cualquier Local con Mesas Libres --</option>
+                    {localesDisponibles
+                      .filter(l => !autoAsignarDistritoId || String(l.distrito_id) === String(autoAsignarDistritoId))
+                      .map(l => {
+                        const freeCount = mesasDisponibles.filter(m => String(m.local_id) === String(l.id) && !m.asignacion_id).length;
+                        return (
+                          <option key={l.id} value={String(l.id)}>
+                            {l.nombre} ({freeCount} mesas libres)
+                          </option>
+                        );
+                      })}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Lista de Personeros a Asignar */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-800">
+                  2. Personeros Libres a Incluir ({selectedAutoPersoneroIds.size} seleccionados)
+                </label>
+                {personerosLibresGlobal.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleToggleSelectAllAutoPersoneros}
+                    className="text-xs text-red-600 hover:text-red-800 font-semibold cursor-pointer"
+                  >
+                    {selectedAutoPersoneroIds.size === personerosLibresGlobal.length ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
+                  </button>
+                )}
+              </div>
+
+              {personerosLibresGlobal.length === 0 ? (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 text-center">
+                  🎉 ¡No hay personeros libres sin mesa! Todos los personeros del sistema ya cuentan con una mesa asignada.
+                </div>
+              ) : (
+                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100 bg-white">
+                  {personerosLibresGlobal.map(u => {
+                    const isChecked = selectedAutoPersoneroIds.has(u.id);
+                    return (
+                      <div
+                        key={u.id}
+                        onClick={() => handleToggleSelectAutoPersonero(u.id)}
+                        className={`p-2.5 flex items-center justify-between text-xs cursor-pointer hover:bg-gray-50 transition-colors ${
+                          isChecked ? 'bg-red-50/40' : ''
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {}}
+                            className="rounded text-red-600 focus:ring-red-500 h-4 w-4 pointer-events-none"
+                          />
+                          <div>
+                            <span className="font-bold text-gray-900">{u.nombres} {u.apellidos}</span>
+                            <span className="text-gray-500 ml-2 font-mono">DNI: {u.dni}</span>
+                          </div>
+                        </div>
+                        {u.telefono && <span className="text-gray-400 font-mono text-[11px]">{u.telefono}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 leading-relaxed">
+              💡 <b>Nota:</b> Cada personero será asignado automáticamente a la siguiente mesa libre en orden correlativo. Su contraseña de acceso al sistema quedará configurada con su número de mesa correspondiente.
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="secondary" onClick={() => setModalAutoAsignarOpen(false)}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleExecuteAutoAsignar}
+                isLoading={autoAsignando}
+                disabled={selectedAutoPersoneroIds.size === 0 || mesasLibresAutoAsignar.length === 0}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                <Zap size={15} className="mr-1.5" />
+                Ejecutar Auto-Asignación
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

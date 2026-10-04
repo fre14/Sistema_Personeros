@@ -1,9 +1,10 @@
 import db from '../config/database.js';
+import bcrypt from 'bcryptjs';
 import { registrarAuditoria } from '../services/auditoria.service.js';
 
 export const asignarPersonero = async (req, res) => {
   try {
-    const { usuario_id, mesa_id } = req.body;
+    const { usuario_id, mesa_id, reubicar } = req.body;
     await db.transaction(async trx => {
       const user = await trx('usuarios').where({ id: usuario_id, rol: 'personero', activo: true }).first();
       if (!user) return res.status(400).json({ success: false, message: 'Usuario inválido o no es personero' });
@@ -11,16 +12,14 @@ export const asignarPersonero = async (req, res) => {
       const mesa = await trx('mesas_sufragio as mesas').where({ id: mesa_id }).first();
       if (!mesa) return res.status(400).json({ success: false, message: 'Mesa inválida' });
       
-      const existingMesa = await trx('asignacion_personeros').where({ mesa_id }).first();
-      if (existingMesa && existingMesa.activo !== false && existingMesa.usuario_id !== usuario_id) {
-        return res.status(400).json({ success: false, message: 'La mesa ya tiene personero asignado' });
-      }
-
-      // Si el personero ya tiene asignación activa en otra mesa, liberar la mesa previa automáticamente
+      // Si el personero ya tiene asignación activa en otra mesa
       const existingUser = await trx('asignacion_personeros').where({ usuario_id, activo: true }).first();
       if (existingUser) {
         if (existingUser.mesa_id === mesa_id) {
           return res.status(400).json({ success: false, message: 'El personero ya está asignado a esta misma mesa' });
+        }
+        if (!reubicar) {
+          return res.status(400).json({ success: false, message: 'El personero ya tiene una mesa asignada' });
         }
         await trx('asignacion_personeros').where({ id: existingUser.id }).update({ activo: false });
         await trx('historial_asignaciones').insert({
@@ -31,6 +30,11 @@ export const asignarPersonero = async (req, res) => {
           motivo_cambio: `Reubicación a mesa ${mesa.numero_mesa}`,
           cambiado_por: req.user?.id || null
         });
+      }
+
+      const existingMesa = await trx('asignacion_personeros').where({ mesa_id }).first();
+      if (existingMesa && existingMesa.activo !== false && existingMesa.usuario_id !== usuario_id) {
+        return res.status(400).json({ success: false, message: 'La mesa ya tiene personero asignado' });
       }
 
       let id;
@@ -50,6 +54,10 @@ export const asignarPersonero = async (req, res) => {
         cambiado_por: req.user?.id || null
       });
       
+      // Sincronizar contraseña del personero con su numero_mesa para login inmediato
+      const hashPass = await bcrypt.hash(mesa.numero_mesa, 10);
+      await trx('usuarios').where({ id: usuario_id }).update({ password_hash: hashPass });
+
       const asignacion = await trx('asignacion_personeros').where({ id }).first();
       await registrarAuditoria('asignacion_personeros', 'create', req.user.id, asignacion, req.body, null, trx);
       
@@ -331,5 +339,176 @@ export const removeAsignacionCoordinador = async (req, res) => {
   } catch (error) {
     console.error('Error eliminando asignación coordinador:', error);
     res.status(500).json({ success: false, message: 'Error eliminando asignación', error: error.message });
+  }
+};
+
+export const getResumenDisponibilidadPersoneros = async (req, res) => {
+  try {
+    const { local_id, distrito_id } = req.query;
+
+    const personerosLibres = await db('usuarios')
+      .where({ rol: 'personero', activo: true })
+      .whereNotExists(function() {
+        this.select('*')
+          .from('asignacion_personeros')
+          .whereRaw('asignacion_personeros.usuario_id = usuarios.id')
+          .andWhere('asignacion_personeros.activo', true);
+      })
+      .select('id', 'dni', 'nombres', 'apellidos', 'telefono')
+      .orderBy('nombres', 'asc');
+
+    let mesasQuery = db('mesas_sufragio as mesas')
+      .join('locales_votacion as locales', 'mesas.local_id', 'locales.id')
+      .whereNotExists(function() {
+        this.select('*')
+          .from('asignacion_personeros')
+          .whereRaw('asignacion_personeros.mesa_id = mesas.id')
+          .andWhere('asignacion_personeros.activo', true);
+      })
+      .select('mesas.id', 'mesas.numero_mesa', 'mesas.local_id', 'locales.nombre as local_nombre');
+
+    if (local_id) {
+      mesasQuery = mesasQuery.where('mesas.local_id', local_id);
+    } else if (distrito_id) {
+      mesasQuery = mesasQuery.where('locales.distrito_id', distrito_id);
+    }
+
+    const mesasLibres = await mesasQuery.orderBy('mesas.numero_mesa', 'asc');
+
+    res.json({
+      success: true,
+      data: {
+        total_personeros_libres: personerosLibres.length,
+        personeros_libres: personerosLibres,
+        total_mesas_libres: mesasLibres.length,
+        mesas_libres: mesasLibres
+      },
+      message: 'Resumen de disponibilidad obtenido'
+    });
+  } catch (error) {
+    console.error('Error obteniendo disponibilidad:', error);
+    res.status(500).json({ success: false, message: 'Error obteniendo disponibilidad', error: error.message });
+  }
+};
+
+export const autoAsignarPersoneros = async (req, res) => {
+  try {
+    const { local_id, distrito_id, usuario_ids } = req.body || {};
+
+    // 1. Obtener personeros sin asignación activa
+    let personerosQuery = db('usuarios')
+      .where({ rol: 'personero', activo: true })
+      .whereNotExists(function() {
+        this.select('*')
+          .from('asignacion_personeros')
+          .whereRaw('asignacion_personeros.usuario_id = usuarios.id')
+          .andWhere('asignacion_personeros.activo', true);
+      });
+
+    if (usuario_ids && Array.isArray(usuario_ids) && usuario_ids.length > 0) {
+      personerosQuery = personerosQuery.whereIn('id', usuario_ids);
+    }
+
+    const personerosLibres = await personerosQuery.orderBy('id', 'asc');
+
+    if (personerosLibres.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No hay personeros disponibles sin asignación para asignar.'
+      });
+    }
+
+    // 2. Obtener mesas libres sin asignación activa
+    let mesasQuery = db('mesas_sufragio as mesas')
+      .join('locales_votacion as locales', 'mesas.local_id', 'locales.id')
+      .whereNotExists(function() {
+        this.select('*')
+          .from('asignacion_personeros')
+          .whereRaw('asignacion_personeros.mesa_id = mesas.id')
+          .andWhere('asignacion_personeros.activo', true);
+      })
+      .select('mesas.id', 'mesas.numero_mesa', 'mesas.local_id', 'locales.nombre as local_nombre');
+
+    if (local_id) {
+      mesasQuery = mesasQuery.where('mesas.local_id', local_id);
+    } else if (distrito_id) {
+      mesasQuery = mesasQuery.where('locales.distrito_id', distrito_id);
+    }
+
+    const mesasLibres = await mesasQuery.orderBy('mesas.numero_mesa', 'asc');
+
+    if (mesasLibres.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No hay mesas de votación libres disponibles en la ubicación seleccionada.'
+      });
+    }
+
+    const maxAsignar = Math.min(personerosLibres.length, mesasLibres.length);
+    const asignacionesCreadas = [];
+
+    await db.transaction(async trx => {
+      for (let i = 0; i < maxAsignar; i++) {
+        const personero = personerosLibres[i];
+        const mesa = mesasLibres[i];
+
+        // Verificar si la mesa ya tenía fila en asignacion_personeros (por unique constraint)
+        const existingMesa = await trx('asignacion_personeros').where({ mesa_id: mesa.id }).first();
+        let asigId;
+
+        if (existingMesa) {
+          await trx('asignacion_personeros')
+            .where({ id: existingMesa.id })
+            .update({ usuario_id: personero.id, activo: true, asignado_en: trx.fn.now() });
+          asigId = existingMesa.id;
+        } else {
+          const [idRes] = await trx('asignacion_personeros')
+            .insert({ usuario_id: personero.id, mesa_id: mesa.id, activo: true })
+            .returning('id');
+          asigId = idRes.id || idRes;
+        }
+
+        // Sincronizar contraseña con el número de mesa
+        const hashPass = await bcrypt.hash(mesa.numero_mesa, 10);
+        await trx('usuarios').where({ id: personero.id }).update({ password_hash: hashPass });
+
+        // Registrar historial
+        await trx('historial_asignaciones').insert({
+          tipo: 'personero',
+          mesa_id: mesa.id,
+          usuario_anterior_id: null,
+          usuario_nuevo_id: personero.id,
+          motivo_cambio: 'Auto-asignación automática',
+          cambiado_por: req.user?.id || null
+        });
+
+        // Registrar auditoría
+        await registrarAuditoria('asignacion_personeros', 'create', req.user.id, { id: asigId, mesa_id: mesa.id, usuario_id: personero.id }, { auto: true }, null, trx);
+
+        asignacionesCreadas.push({
+          usuario_id: personero.id,
+          dni: personero.dni,
+          nombres: `${personero.nombres} ${personero.apellidos}`.trim(),
+          mesa_id: mesa.id,
+          numero_mesa: mesa.numero_mesa,
+          local_nombre: mesa.local_nombre,
+          contrasena_asignada: mesa.numero_mesa
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        total_asignados: asignacionesCreadas.length,
+        pendientes_personeros: personerosLibres.length - asignacionesCreadas.length,
+        mesas_restantes: mesasLibres.length - asignacionesCreadas.length,
+        detalles: asignacionesCreadas
+      },
+      message: `Se asignaron automáticamente ${asignacionesCreadas.length} personeros exitosamente.`
+    });
+  } catch (error) {
+    console.error('Error en auto-asignación de personeros:', error);
+    res.status(500).json({ success: false, message: 'Error al auto-asignar personeros', error: error.message });
   }
 };

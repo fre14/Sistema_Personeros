@@ -2,17 +2,19 @@ import { Router } from 'express';
 import {
   asignarPersonero, reasignarPersonero, getAsignacionesPersoneros, removeAsignacionPersonero,
   asignarCoordinador, reasignarCoordinador, getAsignacionesCoordinadores, removeAsignacionCoordinador,
-  getHistorial
+  getHistorial, autoAsignarPersoneros, getResumenDisponibilidadPersoneros
 } from '../controllers/asignaciones.controller.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import { authenticateToken, requireRole } from '../middlewares/auth.middleware.js';
-import { asignarPersoneroSchema, asignarCoordinadorSchema, reasignarSchema } from '../validations/asignacion.validation.js';
+import { asignarPersoneroSchema, asignarCoordinadorSchema, reasignarSchema, autoAsignarPersonerosSchema } from '../validations/asignacion.validation.js';
 
 const router = Router();
 
 router.use(authenticateToken, requireRole('admin'));
 
 router.get('/personeros', getAsignacionesPersoneros);
+router.get('/personeros/disponibilidad', getResumenDisponibilidadPersoneros);
+router.post('/personeros/auto-asignar', validate(autoAsignarPersonerosSchema), autoAsignarPersoneros);
 router.post('/personeros', validate(asignarPersoneroSchema), asignarPersonero);
 router.put('/personeros/:id/reasignar', validate(reasignarSchema), reasignarPersonero);
 router.delete('/personeros/:id', removeAsignacionPersonero);

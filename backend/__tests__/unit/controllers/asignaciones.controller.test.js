@@ -20,6 +20,7 @@ const {
   asignarCoordinador, reasignarCoordinador,
   getAsignacionesPersoneros, getAsignacionesCoordinadores,
   getHistorial, removeAsignacionPersonero, removeAsignacionCoordinador,
+  autoAsignarPersoneros, getResumenDisponibilidadPersoneros,
 } = await import('../../../src/controllers/asignaciones.controller.js');
 
 let consola;
@@ -592,5 +593,30 @@ describe('peticiones sin usuario autenticado (ramas defensivas)', () => {
     await removeAsignacionCoordinador(req, res);
 
     expect(mockDb.calls('historial_asignaciones').inserts[0].cambiado_por).toBeNull();
+  });
+
+  describe('autoAsignarPersoneros y disponibilidad', () => {
+    it('autoAsignarPersoneros rechaza si no hay personeros libres', async () => {
+      mockDb.queue('usuarios', []);
+      const req = crearReq({ user: usuarioAdmin(), body: {} });
+      const res = crearRes();
+
+      await autoAsignarPersoneros(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.body.message).toMatch(/no hay personeros disponibles/i);
+    });
+
+    it('autoAsignarPersoneros rechaza si no hay mesas libres', async () => {
+      mockDb.queue('usuarios', [{ id: 10, nombres: 'Juan', apellidos: 'Perez', dni: '12345678' }]);
+      mockDb.queue('mesas_sufragio', []);
+      const req = crearReq({ user: usuarioAdmin(), body: {} });
+      const res = crearRes();
+
+      await autoAsignarPersoneros(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.body.message).toMatch(/no hay mesas/i);
+    });
   });
 });
