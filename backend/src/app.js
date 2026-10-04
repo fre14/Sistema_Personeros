@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
+import jwt from 'jsonwebtoken';
 import { createServer } from 'http';
 
 import db from './config/database.js';
@@ -67,26 +68,40 @@ if (process.env.NODE_ENV === 'production') {
 
 const limiterOpts = { standardHeaders: true, legacyHeaders: false };
 
+const isRequestFromAdmin = (req) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader) return false;
+    const token = authHeader.split(' ')[1];
+    if (!token) return false;
+    const decoded = jwt.decode(token);
+    return decoded && decoded.rol === 'admin';
+  } catch {
+    return false;
+  }
+};
+
 const authLimiter = rateLimit({
   ...limiterOpts,
   windowMs: 60 * 1000,
-  max: Number(process.env.RATE_LIMIT_AUTH || 15),
+  max: Number(process.env.RATE_LIMIT_AUTH || 30),
   message: { success: false, message: 'Demasiados intentos de acceso. Espere un minuto.' },
 });
 
 const escrituraLimiter = rateLimit({
   ...limiterOpts,
   windowMs: 60 * 1000,
-  max: Number(process.env.RATE_LIMIT_WRITE || 30),
+  max: Number(process.env.RATE_LIMIT_WRITE || 100),
   message: { success: false, message: 'Demasiados envios seguidos. Espere unos segundos.' },
-  skip: (req) => req.method === 'GET',
+  skip: (req) => req.method === 'GET' || isRequestFromAdmin(req),
 });
 
 const apiLimiter = rateLimit({
   ...limiterOpts,
   windowMs: 60 * 1000,
-  max: Number(process.env.RATE_LIMIT_API || 300),
+  max: Number(process.env.RATE_LIMIT_API || 1000),
   message: { success: false, message: 'Demasiadas peticiones. Espere un momento.' },
+  skip: (req) => isRequestFromAdmin(req),
 });
 
 app.use('/api/', apiLimiter);

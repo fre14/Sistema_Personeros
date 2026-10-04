@@ -56,7 +56,7 @@ api.interceptors.response.use(
     const original = error.config;
     const status = error.response?.status;
 
-    if (status === 401 && original && !original._reintentado) {
+    if (status === 401 && original && !original._reintentado && !original.url?.includes('/auth/login') && !original.url?.includes('/auth/refresh')) {
       original._reintentado = true;
       try {
         renovando = renovando || renovarToken().finally(() => { renovando = null; });

@@ -54,31 +54,81 @@ export const create = async (req, res) => {
     // Verificar si el DNI ya existe antes de procesar
     const existingUser = await db('usuarios').where({ dni: userData.dni }).first();
     if (existingUser) {
-      return res.status(409).json({
-        success: false,
-        message: `El DNI ${userData.dni} ya se encuentra registrado a nombre de ${existingUser.nombres} ${existingUser.apellidos} (Rol: ${existingUser.rol})`,
-        data: {
-          id: existingUser.id,
-          dni: existingUser.dni,
-          nombres: existingUser.nombres,
-          apellidos: existingUser.apellidos,
-          rol: existingUser.rol
-        }
+      // Si el usuario ya existe en la base de datos (activo o inactivo),
+      // se actualizan sus datos y se reactiva automáticamente para que el administrador
+      // nunca quede bloqueado ni deba eliminar manualmente registros.
+      const updateData = {
+        nombres: userData.nombres ? userData.nombres.trim() : existingUser.nombres,
+        apellidos: userData.apellidos ? userData.apellidos.trim() : existingUser.apellidos,
+        rol: userData.rol || existingUser.rol,
+        activo: true,
+        updated_at: db.fn.now()
+      };
+      if (userData.telefono !== undefined) {
+        updateData.telefono = userData.telefono ? userData.telefono.trim() : null;
+      }
+      if (userData.email !== undefined) {
+        updateData.email = userData.email ? userData.email.trim() : null;
+      }
+      if (password && password.length >= 6) {
+        updateData.password_hash = await bcrypt.hash(password, 12);
+      }
+
+      await db('usuarios').where({ id: existingUser.id }).update(updateData);
+      const usuarioActualizado = await db('usuarios')
+        .select('id', 'dni', 'nombres', 'apellidos', 'telefono', 'email', 'rol', 'activo')
+        .where({ id: existingUser.id })
+        .first();
+
+      await registrarAuditoria('usuarios', 'update', req.user.id, usuarioActualizado, req.body, existingUser);
+
+      return res.status(200).json({
+        success: true,
+        data: usuarioActualizado,
+        message: `El usuario con DNI ${userData.dni} (${usuarioActualizado.nombres} ${usuarioActualizado.apellidos}) ya existía y fue reactivado y actualizado exitosamente.`
       });
     }
 
-    const password_hash = await bcrypt.hash(password, 12);
+    const effectivePassword = password || userData.dni || '123456';
+    const password_hash = await bcrypt.hash(effectivePassword, 12);
     
-    const [id] = await db('usuarios').insert({ ...userData, password_hash }).returning('id');
-    const usuario = await db('usuarios').select('id', 'dni', 'nombres', 'apellidos', 'rol', 'activo').where({ id: id.id || id }).first();
+    const [idRes] = await db('usuarios').insert({ ...userData, password_hash }).returning('id');
+    const newId = idRes.id || idRes;
+    const usuario = await db('usuarios').select('id', 'dni', 'nombres', 'apellidos', 'telefono', 'email', 'rol', 'activo').where({ id: newId }).first();
     
     await registrarAuditoria('usuarios', 'create', req.user.id, usuario, req.body);
-    res.status(201).json({ success: true, data: usuario, message: 'Usuario creado exitosamente' });
+    return res.status(201).json({ success: true, data: usuario, message: 'Usuario creado exitosamente' });
   } catch (error) {
     if (error.code === '23505' || error.message?.includes('usuarios_dni_unique')) {
+      // Manejar colisión de clave única concurrente actualizando el registro existente
+      try {
+        const fallbackUser = await db('usuarios').where({ dni: req.body?.dni }).first();
+        if (fallbackUser) {
+          const updateData = {
+            nombres: req.body.nombres ? req.body.nombres.trim() : fallbackUser.nombres,
+            apellidos: req.body.apellidos ? req.body.apellidos.trim() : fallbackUser.apellidos,
+            rol: req.body.rol || fallbackUser.rol,
+            activo: true,
+            updated_at: db.fn.now()
+          };
+          if (req.body.telefono !== undefined) updateData.telefono = req.body.telefono ? req.body.telefono.trim() : null;
+          if (req.body.password && req.body.password.length >= 6) {
+            updateData.password_hash = await bcrypt.hash(req.body.password, 12);
+          }
+          await db('usuarios').where({ id: fallbackUser.id }).update(updateData);
+          const usuario = await db('usuarios').select('id', 'dni', 'nombres', 'apellidos', 'telefono', 'email', 'rol', 'activo').where({ id: fallbackUser.id }).first();
+          return res.status(200).json({
+            success: true,
+            data: usuario,
+            message: `Usuario con DNI ${req.body?.dni} actualizado y reactivado exitosamente.`
+          });
+        }
+      } catch (innerErr) {
+        // Ignorar y continuar a respuesta de error si falla el fallback
+      }
       return res.status(409).json({
         success: false,
-        message: `El DNI ${req.body?.dni} ya se encuentra registrado en el sistema. No se permiten DNIs duplicados.`
+        message: `El DNI ${req.body?.dni} ya se encuentra registrado en el sistema.`
       });
     }
     res.status(500).json({ success: false, message: 'Error creando usuario', error: error.message });

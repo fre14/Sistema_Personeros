@@ -33,6 +33,14 @@ const UsuariosPage = () => {
     return usuarios.find(u => u.dni === dni.trim());
   }, [dni, editingId, usuarios]);
 
+  useEffect(() => {
+    if (!editingId && existingUserWithDni) {
+      if (!nombres) setNombres(existingUserWithDni.nombres || '');
+      if (!apellidos) setApellidos(existingUserWithDni.apellidos || '');
+      if (!telefono && existingUserWithDni.telefono) setTelefono(existingUserWithDni.telefono);
+    }
+  }, [existingUserWithDni, editingId]);
+
   // Bulk State
   const [bulkModal, setBulkModal] = useState({ open: false, rol: '', activo: true, title: '', message: '' });
   const [loadingBulk, setLoadingBulk] = useState(false);
@@ -94,15 +102,11 @@ const UsuariosPage = () => {
       toast.error('El DNI debe contener solo números');
       return;
     }
-    if (!editingId && existingUserWithDni) {
-      toast.error(`El DNI ${dni} ya está registrado para ${existingUserWithDni.nombres} ${existingUserWithDni.apellidos}`);
-      return;
-    }
     if (!nombres.trim() || !apellidos.trim()) {
       toast.error('Nombres y apellidos son requeridos');
       return;
     }
-    if (!editingId && (!password || password.length < 6)) {
+    if (!editingId && (!password || password.length < 6) && !existingUserWithDni) {
       toast.error('La contraseña debe tener al menos 6 caracteres');
       return;
     }
@@ -122,15 +126,15 @@ const UsuariosPage = () => {
         await put(`/usuarios/${editingId}`, payload);
         toast.success('Usuario actualizado');
       } else {
-        await post('/usuarios', {
+        const res = await post('/usuarios', {
           dni: dni.trim(),
           nombres: nombres.trim(),
           apellidos: apellidos.trim(),
           rol,
-          password: password.trim(),
+          password: (password && password.trim().length >= 6) ? password.trim() : (existingUserWithDni ? undefined : '123456'),
           telefono: telefono.trim() || undefined
         });
-        toast.success('Usuario creado exitosamente');
+        toast.success(res.data?.message || 'Usuario guardado exitosamente');
       }
 
       setModalOpen(false);
@@ -404,15 +408,17 @@ const UsuariosPage = () => {
               onChange={(e) => setDni(e.target.value.replace(/\D/g, ''))}
               placeholder="Ej: 45678901"
             />
-            {existingUserWithDni && (
-              <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800 flex items-start gap-2 shadow-sm animate-fadeIn">
-                <AlertTriangle size={16} className="text-red-600 shrink-0 mt-0.5" />
+            {existingUserWithDni && !editingId && (
+              <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 flex items-start gap-2 shadow-xs animate-fadeIn">
+                <ShieldCheck size={16} className="text-amber-600 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-bold text-red-900">¡DNI ya registrado en el sistema!</p>
-                  <p className="mt-0.5">
-                    Este documento ya pertenece a: <span className="font-semibold text-gray-900">{existingUserWithDni.nombres} {existingUserWithDni.apellidos}</span> (Rol: <span className="capitalize font-semibold text-gray-900">{existingUserWithDni.rol}</span>).
+                  <p className="font-bold text-amber-950">¡DNI existente en el sistema!</p>
+                  <p className="mt-0.5 text-gray-800">
+                    Este documento pertenece a: <span className="font-semibold text-gray-900">{existingUserWithDni.nombres} {existingUserWithDni.apellidos}</span> (Rol: <span className="capitalize font-semibold text-gray-900">{existingUserWithDni.rol}</span> - <span className={`font-semibold ${existingUserWithDni.activo ? 'text-emerald-700' : 'text-red-700'}`}>{existingUserWithDni.activo ? 'Activo' : 'Inactivo'}</span>).
                   </p>
-                  <p className="text-red-700 mt-1 font-medium">No se permite registrar a una misma persona dos veces.</p>
+                  <p className="text-amber-800 mt-1 font-medium">
+                    Al hacer clic en <strong>"Guardar y Reactivar Usuario"</strong>, sus datos se actualizarán y reactivarán automáticamente sin errores.
+                  </p>
                 </div>
               </div>
             )}
@@ -451,9 +457,9 @@ const UsuariosPage = () => {
           />
 
           <Input
-            label={editingId ? 'Nueva Contraseña (dejar en blanco para conservar actual)' : 'Contraseña de Acceso'}
+            label={editingId || existingUserWithDni ? 'Nueva Contraseña (dejar en blanco para conservar actual)' : 'Contraseña de Acceso (por defecto 123456)'}
             type="password"
-            required={!editingId}
+            required={!editingId && !existingUserWithDni}
             minLength={6}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -470,9 +476,10 @@ const UsuariosPage = () => {
             <Button
               type="submit"
               isLoading={saving}
-              disabled={saving || (!!existingUserWithDni && !editingId)}
+              disabled={saving}
+              className={existingUserWithDni && !editingId ? 'bg-amber-600 hover:bg-amber-700 text-white' : ''}
             >
-              {editingId ? 'Actualizar Usuario' : 'Crear Usuario'}
+              {editingId ? 'Actualizar Usuario' : (existingUserWithDni ? 'Guardar y Reactivar Usuario' : 'Crear Usuario')}
             </Button>
           </div>
         </form>

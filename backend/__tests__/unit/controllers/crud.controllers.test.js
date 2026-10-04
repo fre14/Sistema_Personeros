@@ -170,16 +170,17 @@ describe('usuarios.controller', () => {
       expect(res.body.data.password_hash).toBeUndefined();
     });
 
-    it('responde 409 si el DNI ya existe (violacion de unicidad)', async () => {
-      mockDb.queue('usuarios', { id: 9, dni: '12345678', nombres: 'Juan', apellidos: 'Perez', rol: 'personero' });
-      const req = crearReq({ user: usuarioAdmin(), body: { dni: '12345678', password: 'x' } });
+    it('actualiza y reactiva exitosamente si el DNI ya existe (smart upsert para administradores)', async () => {
+      mockDb.queue('usuarios', { id: 9, dni: '12345678', nombres: 'Juan', apellidos: 'Perez', rol: 'personero', activo: false });
+      mockDb.queue('usuarios', { id: 9, dni: '12345678', nombres: 'Juan', apellidos: 'Perez', rol: 'personero', activo: true });
+      const req = crearReq({ user: usuarioAdmin(), body: { dni: '12345678', password: 'secretpassword' } });
       const res = crearRes();
 
       await usuarios.create(req, res);
 
-      expect(res.status).toHaveBeenCalledWith(409);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toContain('ya se encuentra registrado');
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('ya existía');
     });
   });
 

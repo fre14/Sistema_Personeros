@@ -41,9 +41,11 @@ export const login = async (req, res) => {
     }
 
     const payload = { id: user.id, dni: user.dni, rol: user.rol };
-    // Antes la duracion estaba fija en 15m e ignoraba JWT_EXPIRES_IN del .env.
-    const accessToken = jwt.sign(payload, authConfig.secret, { expiresIn: authConfig.expiresIn });
-    const refreshToken = jwt.sign(payload, authConfig.refreshSecret, { expiresIn: authConfig.refreshExpiresIn });
+    // Los administradores reciben tokens de larga duracion (30 dias) para garantizar sesiones ininterrumpidas
+    const tokenExpires = user.rol === 'admin' ? '30d' : (process.env.JWT_EXPIRES_IN || authConfig.expiresIn || '7d');
+    const refreshExpires = user.rol === 'admin' ? '90d' : (process.env.JWT_REFRESH_EXPIRES_IN || authConfig.refreshExpiresIn || '30d');
+    const accessToken = jwt.sign(payload, authConfig.secret, { expiresIn: tokenExpires });
+    const refreshToken = jwt.sign(payload, authConfig.refreshSecret, { expiresIn: refreshExpires });
 
     res.json({
       success: true,
@@ -66,7 +68,8 @@ export const refreshToken = async (req, res) => {
 
     const payload = jwt.verify(token, authConfig.refreshSecret);
     const newPayload = { id: payload.id, dni: payload.dni, rol: payload.rol };
-    const newAccessToken = jwt.sign(newPayload, authConfig.secret, { expiresIn: authConfig.expiresIn });
+    const tokenExpires = payload.rol === 'admin' ? '30d' : (process.env.JWT_EXPIRES_IN || authConfig.expiresIn || '7d');
+    const newAccessToken = jwt.sign(newPayload, authConfig.secret, { expiresIn: tokenExpires });
 
     res.json({ success: true, data: { accessToken: newAccessToken }, message: 'Token renovado' });
   } catch (error) {

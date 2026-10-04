@@ -5,7 +5,14 @@ import toast from 'react-hot-toast';
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [loading, setLoading] = useState(true);
 
@@ -15,8 +22,10 @@ export const AuthProvider = ({ children }) => {
         try {
           const res = await get('/auth/profile');
           setUser(res.data.data);
+          localStorage.setItem('user', JSON.stringify(res.data.data));
         } catch (error) {
           localStorage.removeItem('token');
+          localStorage.removeItem('user');
           setToken(null);
           setUser(null);
         }
@@ -32,6 +41,7 @@ export const AuthProvider = ({ children }) => {
       const { accessToken, refreshToken, user: userData } = res.data.data;
       localStorage.setItem('token', accessToken);
       localStorage.setItem('refreshToken', refreshToken);
+      localStorage.setItem('user', JSON.stringify(userData));
       setToken(accessToken);
       setUser(userData);
       return userData;
